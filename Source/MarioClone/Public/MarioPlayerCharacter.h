@@ -2,6 +2,7 @@
 #include "CoreMinimal.h"
 #include "CombatInterface.h"
 #include "HealthComponent.h"
+#include "Hitbox.h"
 #include "GameFramework/Character.h"
 #include "MarioPlayerCharacter.generated.h"
 
@@ -18,13 +19,22 @@ class MARIOCLONE_API AMarioPlayerCharacter : public ACharacter, public ICombatIn
 public:
 	
 	AMarioPlayerCharacter();
-	virtual void PostInitializeComponents() override;
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
+	virtual void NotifyControllerChanged() override;
 
 private:
-	
+
+	UFUNCTION()
+	void OnGameStateSet(AGameStateBase* GameState);
+	FDelegateHandle GameStateDelegateHandle;
+
+#pragma endregion
+#pragma region Camera
+
+private:
+
 	UPROPERTY(VisibleAnywhere, meta = (AllowPrivateAccess = "true"))
 	UCameraComponent* Camera = nullptr;
 	UPROPERTY(EditDefaultsOnly, Category = "Camera")
@@ -106,20 +116,15 @@ private:
 
 public:
 
-	virtual bool IsEnemy_Implementation() const override { return false; }
+	virtual EHostility GetHostility_Implementation() const override { return EHostility::Friendly; }
 
 private:
-
-	UPROPERTY(EditDefaultsOnly, Category = "Damage")
-	float BaseDamage = 25.0f;
-
-	static const FName HitboxCollisionProfile;
 	
-	UPROPERTY(VisibleAnywhere)
-	UCapsuleComponent* Hitbox;
+	UPROPERTY(VisibleAnywhere, meta = (AllowPrivateAccess = "true"))
+	UHitbox* PlayerHitbox;
+	FHitboxCallback HitboxCallback;
 	UFUNCTION()
-	void OnHitboxOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp,
-		int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);
+	void OnHitboxCollision(UHitbox* CollidingHitbox, const FVector& BounceImpulse, const float DamageValue);
 
 #pragma endregion 
 };

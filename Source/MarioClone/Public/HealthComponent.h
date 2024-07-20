@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include "CoreMinimal.h"
+#include "MarioGameState.h"
 #include "Components/WidgetComponent.h"
 #include "HealthComponent.generated.h"
 
@@ -24,18 +25,27 @@ public:
 	virtual void BeginPlay() override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
+private:
+
+	//Ref saved to bind/unbind a callback for local player initialization for delayed health bar widget setup.
+	UPROPERTY()
+	AMarioGameState* GameStateRef = nullptr;
+
 #pragma endregion 
 #pragma region Health
 	
 public:
 
+	bool IsAlive() const { return bIsAlive; }
 	float GetCurrentHealth() const { return CurrentHealth; }
 	float GetMaxHealth() const { return MaxHealth; }
 	float GetHealthPercentage() const { return MaxHealth == 0.0f ? 0.0f : FMath::Clamp(CurrentHealth / MaxHealth, 0.0f, 1.0f); }
-	bool IsAlive() const { return bIsAlive; }
-	
+
+	//Deals damage or healing to this component. Server-only.
 	void ModifyHealth(const float HealthChange);
+	//Instantly deals all remaining health as damage.
 	void InstantKill();
+	//Sets health back to full and changes status back to alive.
 	void ResetHealth();
 	
 	void SubscribeToHealthChanged(const FHealthCallback& Callback);
@@ -66,7 +76,7 @@ private:
 
 private:
 
-	//Whether to show a floating health bar widget.
+	//Whether to show a floating health bar widget above the owning actor.
 	UPROPERTY(EditAnywhere, Category = "Health")
 	bool bShowHealthBar = true;
 	UPROPERTY(EditAnywhere, Category = "Health", meta = (EditCondition = "bShowHealthBar"))
@@ -75,6 +85,12 @@ private:
 	UPROPERTY()
 	UFloatingHealthBar* HealthBarWidget;
 	void InitHealthBarWidget();
+
+	//If the local player was not yet initialized during this component's setup, this callback will be called by the GameState after initialization.
+	//This prevents setting up unnecessary widgets where no local player exists (dedicated servers).
+	FPlayerInitializationCallback LocalPlayerInitCallback;
+	UFUNCTION()
+	void OnLocalPlayerInit(AMarioPlayerCharacter* LocalPlayer);
 
 #pragma endregion 
 };

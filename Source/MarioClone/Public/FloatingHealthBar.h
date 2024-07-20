@@ -22,12 +22,14 @@ private:
 
 	UPROPERTY()
 	UHealthComponent* HealthComponent;
-	UFUNCTION()
-	void UpdateHealth(const float PreviousHealth, const float CurrentHealth, const float MaxHealth);
+	//Callback from owning component that is fired when health value changes.
 	FHealthCallback HealthCallback;
 	UFUNCTION()
-	void UpdateLife(const bool bNewLifeStatus);
+	void UpdateHealth(const float PreviousHealth, const float CurrentHealth, const float MaxHealth);
+	//Callback from owning component that is fired when the owner dies or respawns.
 	FLifeCallback LifeCallback;
+	UFUNCTION()
+	void UpdateLife(const bool bNewLifeStatus);
 
 	void UpdateHealthVisuals();
 };

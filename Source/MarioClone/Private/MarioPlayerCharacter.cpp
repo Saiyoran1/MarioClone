@@ -1,10 +1,10 @@
 ﻿#include "MarioClone/Public/MarioPlayerCharacter.h"
 #include "HealthComponent.h"
+#include "Hitbox.h"
 #include "Camera/CameraComponent.h"
-#include "Components/CapsuleComponent.h"
 #include "GameFramework/PawnMovementComponent.h"
 
-const FName AMarioPlayerCharacter::HitboxCollisionProfile = FName(TEXT("Hitbox"));
+#pragma region Core
 
 AMarioPlayerCharacter::AMarioPlayerCharacter()
 {
@@ -16,17 +16,16 @@ AMarioPlayerCharacter::AMarioPlayerCharacter()
 	Camera->SetWorldRotation(FRotator(0.0f));
 	Camera->SetRelativeLocation(FVector(0.0f, 800.0f, 100.0f));
 
-	Hitbox = CreateDefaultSubobject<UCapsuleComponent>(FName(TEXT("Hitbox")));
-	Hitbox->SetupAttachment(RootComponent);
-	Hitbox->SetCollisionProfileName(HitboxCollisionProfile);
+	PlayerHitbox = CreateDefaultSubobject<UHitbox>(FName(TEXT("Hitbox")));
+	PlayerHitbox->SetupAttachment(RootComponent);
 
 	HealthComponent = CreateDefaultSubobject<UHealthComponent>(FName(TEXT("Health")));
 	HealthComponent->SetupAttachment(RootComponent);
 }
 
-void AMarioPlayerCharacter::PostInitializeComponents()
+void AMarioPlayerCharacter::BeginPlay()
 {
-	Super::PostInitializeComponents();
+	Super::BeginPlay();
 
 	//Constrain movement to the Y and Z axes, since this is a 2D game.
 	GetMovementComponent()->SetPlaneConstraintEnabled(true);
@@ -38,13 +37,8 @@ void AMarioPlayerCharacter::PostInitializeComponents()
 	HealthComponent->SubscribeToHealthChanged(HealthCallback);
 	HealthComponent->SubscribeToLifeStatusChanged(LifeCallback);
 
-	//Bind to hitbox overlaps to deal damage and bounce.
-	Hitbox->OnComponentBeginOverlap.AddDynamic(this, &AMarioPlayerCharacter::OnHitboxOverlap);
-}
-
-void AMarioPlayerCharacter::BeginPlay()
-{
-	Super::BeginPlay();
+	HitboxCallback.BindDynamic(this, &AMarioPlayerCharacter::OnHitboxCollision);
+	PlayerHitbox->SubscribeToHitboxCollision(HitboxCallback);
 
 	if (IsLocallyControlled())
 	{
@@ -68,6 +62,33 @@ void AMarioPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInp
 	PlayerInputComponent->BindAction(FName("DEBUG_KillSelf"), IE_Pressed, this, &AMarioPlayerCharacter::DEBUG_KillSelf);
 	PlayerInputComponent->BindAction(FName("DEBUG_ReviveSelf"), IE_Pressed, this, &AMarioPlayerCharacter::DEBUG_ReviveSelf);
 #endif
+}
+
+void AMarioPlayerCharacter::NotifyControllerChanged()
+{
+	Super::NotifyControllerChanged();
+	if (Controller.Get() && Controller->IsLocalPlayerController())
+	{
+		AMarioGameState* GameState = Cast<AMarioGameState>(GetWorld()->GetGameState());
+		if (IsValid(GameState))
+		{
+			GameState->InitializePlayer(this);
+		}
+		else
+		{
+			GameStateDelegateHandle = GetWorld()->GameStateSetEvent.AddUObject(this, &AMarioPlayerCharacter::OnGameStateSet);
+		}
+	}
+}
+
+void AMarioPlayerCharacter::OnGameStateSet(AGameStateBase* GameState)
+{
+	AMarioGameState* MarioGameState = Cast<AMarioGameState>(GetWorld()->GetGameState());
+	if (IsValid(MarioGameState))
+	{
+		GetWorld()->GameStateSetEvent.Remove(GameStateDelegateHandle);
+		MarioGameState->InitializePlayer(this);
+	}
 }
 
 void AMarioPlayerCharacter::Tick(float DeltaTime)
@@ -102,6 +123,7 @@ void AMarioPlayerCharacter::Tick(float DeltaTime)
 		FString::Printf(L"%i/%i", FMath::RoundToInt(HealthComponent->GetCurrentHealth()), FMath::RoundToInt(HealthComponent->GetMaxHealth())), 0, FColor::Red, 0);
 }
 
+#pragma endregion 
 #pragma region Movement
 
 void AMarioPlayerCharacter::MovementInput(const float AxisValue)
@@ -140,39 +162,16 @@ void AMarioPlayerCharacter::OnLifeStatusChanged(const bool bNewLifeStatus)
 #pragma endregion
 #pragma region Collision
 
-void AMarioPlayerCharacter::OnHitboxOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep,
-	const FHitResult& SweepResult)
+void AMarioPlayerCharacter::OnHitboxCollision(UHitbox* CollidingHitbox, const FVector& BounceImpulse, const float DamageValue)
 {
-	const float HitboxMinZ = OverlappedComponent->Bounds.Origin.Z - OverlappedComponent->Bounds.BoxExtent.Z;
-	const float OtherHitboxOriginZ = OtherComp->Bounds.Origin.Z;
-	const float OtherHitboxMaxZ = OtherHitboxOriginZ + OtherComp->Bounds.BoxExtent.Z;
-	//Arbitrary threshold for determining if we are "above" or "below" and can deal damage or not.
-	const float ZThreshold = FMath::Lerp(OtherHitboxOriginZ, OtherHitboxMaxZ, 0.5f);
-	const bool bAboveThreshold = HitboxMinZ > ZThreshold;
-	if (bAboveThreshold)
+	if (IsLocallyControlled() && BounceImpulse != FVector::ZeroVector)
 	{
-		if (IsLocallyControlled())
-		{
-			LaunchCharacter(FVector::UpVector * 1000.0f, false, true);
-		}
-		//On the server we can try to do damage to enemies if we are landing on them from above.
-		if (HasAuthority())
-		{
-			if ( OtherActor->Implements<UCombatInterface>() && ICombatInterface::Execute_IsEnemy(OtherActor))
-			{
-				UHealthComponent* EnemyHealth = ICombatInterface::Execute_GetHealthComponent(OtherActor);
-				if (IsValid(EnemyHealth))
-				{
-					EnemyHealth->ModifyHealth(BaseDamage * -1.0f);
-				}
-			}
-		}
+		LaunchCharacter(BounceImpulse, false, true);
 	}
-	const FColor DEBUG_Color = bAboveThreshold ? FColor::Red : FColor::Yellow;
-	DrawDebugBox(GetWorld(), OverlappedComponent->Bounds.Origin, OverlappedComponent->Bounds.BoxExtent, FColor::Green, false, 2.0f, 0, 2);
-	DrawDebugBox(GetWorld(), OtherComp->Bounds.Origin, OtherComp->Bounds.BoxExtent, DEBUG_Color, false,2.0f, 0, 2);
-	DrawDebugLine(GetWorld(), FVector(OverlappedComponent->GetComponentLocation().X, OverlappedComponent->GetComponentLocation().Y, HitboxMinZ),
-		FVector(OtherComp->GetComponentLocation().X, OtherComp->GetComponentLocation().Y, ZThreshold), DEBUG_Color, false,2.0f, 0, 2);
+	if (HasAuthority() && IsValid(HealthComponent) && DamageValue != 0.0f)
+	{
+		HealthComponent->ModifyHealth(DamageValue * -1.0f);
+	}
 }
 
 #pragma endregion 

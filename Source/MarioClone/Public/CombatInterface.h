@@ -5,6 +5,14 @@
 
 class UHealthComponent;
 
+UENUM()
+enum class EHostility : uint8
+{
+	Neutral,
+	Friendly,
+	Enemy
+};
+
 //Basic interface for getting components related to combat from an actor in the world.
 UINTERFACE()
 class UCombatInterface : public UInterface
@@ -23,6 +31,6 @@ public:
 	virtual UHealthComponent* GetHealthComponent_Implementation() const;
 	
 	UFUNCTION(BlueprintNativeEvent)
-	bool IsEnemy() const;
-	virtual bool IsEnemy_Implementation() const { return true; }
+	EHostility GetHostility() const;
+	virtual EHostility GetHostility_Implementation() const { return EHostility::Enemy; }
 };

@@ -1,6 +1,7 @@
 ﻿#include "HealthComponent.h"
-
 #include "FloatingHealthBar.h"
+#include "MarioGameState.h"
+#include "MarioPlayerCharacter.h"
 #include "Net/UnrealNetwork.h"
 
 #pragma region Core
@@ -28,7 +29,22 @@ void UHealthComponent::BeginPlay()
 
 	if (bShowHealthBar && IsValid(HealthBarWidgetClass))
 	{
-		InitHealthBarWidget();
+		//We only initialize health bars if the local player is valid. No need to do this on a dedicated server, for instance.
+		GameStateRef = Cast<AMarioGameState>(GetWorld()->GetGameState());
+		if (IsValid(GameStateRef))
+		{
+			//If the local player already exists, we can go ahead and set up our health bar widget,
+			if (IsValid(GameStateRef->GetLocalMarioPlayer()))
+			{
+				InitHealthBarWidget();
+			}
+			//If the local player is not yet set up, we instead wait for a callback from the GameState.
+			else
+			{
+				LocalPlayerInitCallback.BindDynamic(this, &UHealthComponent::OnLocalPlayerInit);
+				GameStateRef->SubscribeToLocalPlayerInitialized(LocalPlayerInitCallback);
+			}
+		}
 	}
 }
 
@@ -147,6 +163,15 @@ void UHealthComponent::InitHealthBarWidget()
 		SetWidgetSpace(EWidgetSpace::Screen);
 		SetDrawAtDesiredSize(true);
 		HealthBarWidget->Init(this);
+	}
+}
+
+void UHealthComponent::OnLocalPlayerInit(AMarioPlayerCharacter* LocalPlayer)
+{
+	if (IsValid(LocalPlayer))
+	{
+		GameStateRef->UnsubscribeFromLocalPlayerInitialized(LocalPlayerInitCallback);
+		InitHealthBarWidget();
 	}
 }
 
