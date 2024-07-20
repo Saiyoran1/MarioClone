@@ -56,7 +56,7 @@ private:
 
 public:
 
-	virtual UHealthComponent* GetHealthComponent() const override { return HealthComponent; }
+	virtual UHealthComponent* GetHealthComponent_Implementation() const override { return HealthComponent; }
 
 private:
 
@@ -101,5 +101,25 @@ private:
 	void Server_DEBUG_ReviveSelf();
 #endif
 	
+#pragma endregion
+#pragma region Collision
+
+public:
+
+	virtual bool IsEnemy_Implementation() const override { return false; }
+
+private:
+
+	UPROPERTY(EditDefaultsOnly, Category = "Damage")
+	float BaseDamage = 25.0f;
+
+	static const FName HitboxCollisionProfile;
+	
+	UPROPERTY(VisibleAnywhere)
+	UCapsuleComponent* Hitbox;
+	UFUNCTION()
+	void OnHitboxOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp,
+		int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);
+
 #pragma endregion 
 };

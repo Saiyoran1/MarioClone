@@ -1,7 +1,7 @@
 ﻿#include "CombatInterface.h"
 #include "HealthComponent.h"
 
-UHealthComponent* ICombatInterface::GetHealthComponent() const
+UHealthComponent* ICombatInterface::GetHealthComponent_Implementation() const
 {
 	//If we got here, that means the actor implementing this interface didn't implement GetHealthComponent.
 	//We can just call FindComponentByClass, but its slower than the actor just returning the pointer they already have cached.

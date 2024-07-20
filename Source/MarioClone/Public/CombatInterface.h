@@ -18,5 +18,11 @@ class MARIOCLONE_API ICombatInterface
 
 public:
 
-	virtual UHealthComponent* GetHealthComponent() const;
+	UFUNCTION(BlueprintNativeEvent)
+	UHealthComponent* GetHealthComponent() const;
+	virtual UHealthComponent* GetHealthComponent_Implementation() const;
+	
+	UFUNCTION(BlueprintNativeEvent)
+	bool IsEnemy() const;
+	virtual bool IsEnemy_Implementation() const { return true; }
 };

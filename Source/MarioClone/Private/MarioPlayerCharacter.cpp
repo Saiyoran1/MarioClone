@@ -1,7 +1,10 @@
 ﻿#include "MarioClone/Public/MarioPlayerCharacter.h"
 #include "HealthComponent.h"
 #include "Camera/CameraComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "GameFramework/PawnMovementComponent.h"
+
+const FName AMarioPlayerCharacter::HitboxCollisionProfile = FName(TEXT("Hitbox"));
 
 AMarioPlayerCharacter::AMarioPlayerCharacter()
 {
@@ -12,6 +15,10 @@ AMarioPlayerCharacter::AMarioPlayerCharacter()
 	Camera->SetUsingAbsoluteRotation(true);
 	Camera->SetWorldRotation(FRotator(0.0f));
 	Camera->SetRelativeLocation(FVector(0.0f, 800.0f, 100.0f));
+
+	Hitbox = CreateDefaultSubobject<UCapsuleComponent>(FName(TEXT("Hitbox")));
+	Hitbox->SetupAttachment(RootComponent);
+	Hitbox->SetCollisionProfileName(HitboxCollisionProfile);
 
 	HealthComponent = CreateDefaultSubobject<UHealthComponent>(FName(TEXT("Health")));
 	HealthComponent->SetupAttachment(RootComponent);
@@ -30,6 +37,9 @@ void AMarioPlayerCharacter::PostInitializeComponents()
 	LifeCallback.BindDynamic(this, &AMarioPlayerCharacter::OnLifeStatusChanged);
 	HealthComponent->SubscribeToHealthChanged(HealthCallback);
 	HealthComponent->SubscribeToLifeStatusChanged(LifeCallback);
+
+	//Bind to hitbox overlaps to deal damage and bounce.
+	Hitbox->OnComponentBeginOverlap.AddDynamic(this, &AMarioPlayerCharacter::OnHitboxOverlap);
 }
 
 void AMarioPlayerCharacter::BeginPlay()
@@ -128,6 +138,44 @@ void AMarioPlayerCharacter::OnLifeStatusChanged(const bool bNewLifeStatus)
 }
 
 #pragma endregion
+#pragma region Collision
+
+void AMarioPlayerCharacter::OnHitboxOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep,
+	const FHitResult& SweepResult)
+{
+	const float HitboxMinZ = OverlappedComponent->Bounds.Origin.Z - OverlappedComponent->Bounds.BoxExtent.Z;
+	const float OtherHitboxOriginZ = OtherComp->Bounds.Origin.Z;
+	const float OtherHitboxMaxZ = OtherHitboxOriginZ + OtherComp->Bounds.BoxExtent.Z;
+	//Arbitrary threshold for determining if we are "above" or "below" and can deal damage or not.
+	const float ZThreshold = FMath::Lerp(OtherHitboxOriginZ, OtherHitboxMaxZ, 0.5f);
+	const bool bAboveThreshold = HitboxMinZ > ZThreshold;
+	if (bAboveThreshold)
+	{
+		if (IsLocallyControlled())
+		{
+			LaunchCharacter(FVector::UpVector * 1000.0f, false, true);
+		}
+		//On the server we can try to do damage to enemies if we are landing on them from above.
+		if (HasAuthority())
+		{
+			if ( OtherActor->Implements<UCombatInterface>() && ICombatInterface::Execute_IsEnemy(OtherActor))
+			{
+				UHealthComponent* EnemyHealth = ICombatInterface::Execute_GetHealthComponent(OtherActor);
+				if (IsValid(EnemyHealth))
+				{
+					EnemyHealth->ModifyHealth(BaseDamage * -1.0f);
+				}
+			}
+		}
+	}
+	const FColor DEBUG_Color = bAboveThreshold ? FColor::Red : FColor::Yellow;
+	DrawDebugBox(GetWorld(), OverlappedComponent->Bounds.Origin, OverlappedComponent->Bounds.BoxExtent, FColor::Green, false, 2.0f, 0, 2);
+	DrawDebugBox(GetWorld(), OtherComp->Bounds.Origin, OtherComp->Bounds.BoxExtent, DEBUG_Color, false,2.0f, 0, 2);
+	DrawDebugLine(GetWorld(), FVector(OverlappedComponent->GetComponentLocation().X, OverlappedComponent->GetComponentLocation().Y, HitboxMinZ),
+		FVector(OtherComp->GetComponentLocation().X, OtherComp->GetComponentLocation().Y, ZThreshold), DEBUG_Color, false,2.0f, 0, 2);
+}
+
+#pragma endregion 
 
 #if WITH_EDITOR
 #pragma region Debug
