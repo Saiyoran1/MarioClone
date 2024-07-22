@@ -3,14 +3,17 @@
 #include "CombatInterface.h"
 #include "HealthComponent.h"
 #include "Hitbox.h"
-#include "GameFramework/Character.h"
+#include "PaperCharacter.h"
+#include "PaperFlipbook.h"
+
 #include "MarioPlayerCharacter.generated.h"
 
+class UMarioMovementComponent;
 class UHealthComponent;
 class UCameraComponent;
 
 UCLASS()
-class MARIOCLONE_API AMarioPlayerCharacter : public ACharacter, public ICombatInterface
+class MARIOCLONE_API AMarioPlayerCharacter : public APaperCharacter, public ICombatInterface
 {
 	GENERATED_BODY()
 
@@ -18,9 +21,9 @@ class MARIOCLONE_API AMarioPlayerCharacter : public ACharacter, public ICombatIn
 
 public:
 	
-	AMarioPlayerCharacter();
+	AMarioPlayerCharacter(const FObjectInitializer& ObjectInitializer);
 	virtual void BeginPlay() override;
-	virtual void Tick(float DeltaTime) override;
+	virtual void Tick(float DeltaSeconds) override;
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 	virtual void NotifyControllerChanged() override;
 
@@ -31,6 +34,20 @@ private:
 	FDelegateHandle GameStateDelegateHandle;
 
 #pragma endregion
+#pragma region Animations
+
+private:
+
+	UPROPERTY(EditDefaultsOnly, Category = "Animations")
+	UPaperFlipbook* IdleFlipbook = nullptr;
+	UPROPERTY(EditDefaultsOnly, Category = "Animations")
+	UPaperFlipbook* RunningFlipbook = nullptr;
+	UPROPERTY(EditDefaultsOnly, Category = "Animations")
+	UPaperFlipbook* JumpingFlipbook = nullptr;
+
+	bool bWasMovingRight = true;
+
+#pragma endregion 
 #pragma region Camera
 
 private:
@@ -38,13 +55,13 @@ private:
 	UPROPERTY(VisibleAnywhere, meta = (AllowPrivateAccess = "true"))
 	UCameraComponent* Camera = nullptr;
 	UPROPERTY(EditDefaultsOnly, Category = "Camera")
-	float MaxCameraLeadOffset = 300.0f;
+	float MaxCameraLeadOffset = 100.0f;
 	UPROPERTY(EditDefaultsOnly, Category = "Camera")
-	float CameraLeadInterpSpeed = 300.0f;
+	float CameraLeadInterpSpeed = 600.0f;
 	UPROPERTY(EditDefaultsOnly, Category = "Camera")
 	float CameraRecenterDelay = 0.5f;
 	UPROPERTY(EditDefaultsOnly, Category = "Camera")
-	float CameraRecenterSpeed = 100.0f;
+	float CameraRecenterSpeed = 150.0f;
 
 	FVector DesiredBaseCameraOffset;
 	float TimeAtRest = 0.0f;
@@ -53,6 +70,9 @@ private:
 #pragma region Movement
 
 private:
+
+	UPROPERTY()
+	UMarioMovementComponent* MarioMoveComponent;
 
 	UFUNCTION()
 	void MovementInput(const float AxisValue);

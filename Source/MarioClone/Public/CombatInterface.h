@@ -8,9 +8,9 @@ class UHealthComponent;
 UENUM()
 enum class EHostility : uint8
 {
-	Neutral,
-	Friendly,
-	Enemy
+	Neutral = 0,
+	Enemy = 1,
+	Friendly = 2
 };
 
 //Basic interface for getting components related to combat from an actor in the world.

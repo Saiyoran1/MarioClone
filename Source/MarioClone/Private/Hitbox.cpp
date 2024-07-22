@@ -1,9 +1,8 @@
 ﻿#include "Hitbox.h"
-#include "CombatInterface.h"
+#include "HitboxManager.h"
+#include "Net/UnrealNetwork.h"
 
-const FName UHitbox::FriendlyHitboxProfile = FName(TEXT("FriendlyHitbox"));
-const FName UHitbox::EnemyHitboxProfile = FName(TEXT("EnemyHitbox"));
-const FName UHitbox::NeutralHitboxProfile = FName(TEXT("NeutralHitbox"));
+const FName UHitbox::HitboxProfile = FName(TEXT("Hitbox"));
 
 #pragma region Core
 
@@ -11,42 +10,68 @@ UHitbox::UHitbox()
 {
 	PrimaryComponentTick.bCanEverTick = false;
 	bWantsInitializeComponent = true;
+	SetIsReplicatedByDefault(true);
+}
+
+void UHitbox::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(UHitbox, HitboxID);
 }
 
 void UHitbox::InitializeComponent()
 {
 	Super::InitializeComponent();
 
-	if (GetOwner()->Implements<UCombatInterface>())
+	//InitializeComponent also runs in the editor when loading the owning actor.
+	//Check here that we are actually in the game.
+	if (!IsValid(GetWorld()) || !GetWorld()->IsGameWorld())
 	{
-		switch (ICombatInterface::Execute_GetHostility(GetOwner()))
-		{
-		case EHostility::Neutral :
-			SetCollisionProfileName(NeutralHitboxProfile);
-			break;
-		case EHostility::Friendly :
-			SetCollisionProfileName(FriendlyHitboxProfile);
-			break;
-		case EHostility::Enemy :
-			SetCollisionProfileName(EnemyHitboxProfile);
-			break;
-		default :
-			SetCollisionEnabled(ECollisionEnabled::NoCollision);
-		}
+		return;
 	}
-	else
-	{
-		SetCollisionProfileName(NeutralHitboxProfile);
-	}
+
+	SetCollisionProfileName(HitboxProfile);
 	OnComponentBeginOverlap.AddDynamic(this, &UHitbox::OnOverlap);
 }
 
 void UHitbox::BeginPlay()
 {
 	Super::BeginPlay();
-	//Cache off pawn owner to check for locally controlled when doing bounce collisions.
+	//Cache pawn owner to check for locally controlled when doing bounce collisions.
 	OwnerAsPawn = Cast<APawn>(GetOwner());
+	//Save off hitbox hostility for determining collision behavior with other hitboxes.
+	//Defaults to Neutral for actors not implementing the interface.
+	if (GetOwner()->Implements<UCombatInterface>())
+	{
+		OwnerHostility = ICombatInterface::Execute_GetHostility(GetOwner());
+	}
+	//Assign a unique ID to this hitbox, used for networking bounces and prioritizing hitboxes during collisions.
+	if (GetOwner()->HasAuthority())
+	{
+		UHitboxManager* HitboxManager = GetWorld()->GetSubsystem<UHitboxManager>();
+		if (IsValid(HitboxManager))
+		{
+			HitboxID = HitboxManager->RegisterNewHitbox(this);
+		}
+	}
 }
+
+void UHitbox::OnRep_HitboxID()
+{
+	if (HitboxID == -1)
+	{
+		return;
+	}
+	UHitboxManager* HitboxManager = GetWorld()->GetSubsystem<UHitboxManager>();
+	if (IsValid(HitboxManager))
+	{
+		HitboxManager->RegisterNewHitbox(this, HitboxID);
+	}
+}
+
+#pragma endregion
+#pragma region Collision
 
 void UHitbox::OnOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor,
                         UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
@@ -60,34 +85,79 @@ void UHitbox::OnOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherA
 	{
 		return;
 	}
-	FVector BounceVector = FVector::ZeroVector;
-	if (CanBeBounced())
+	//When two hitboxes collide, only one of them actually processes the collision.
+	//The other will be notified by the one that does the processing.
+	if (!ShouldProcessCollision(CollidingHitbox))
 	{
-		BounceVector = CollidingHitbox->GetBounceImpulse(this);
+		return;
 	}
-	float DamageValue = 0.0f;
-	if (CanBeCollisionDamaged())
-	{
-		DamageValue = CollidingHitbox->GetCollisionDamageDone(this);
-	}
-	OnHitboxCollision.Broadcast(CollidingHitbox, BounceVector, DamageValue);
+	//Calculate the bounce impulse and damage to apply to each hitbox.
+	FVector ImpulseToThis = FVector::ZeroVector;
+	FVector ImpulseToOther = FVector::ZeroVector;
+	float DamageToThis = 0.0f;
+	float DamageToOther = 0.0f;
+	ProcessCollision(CollidingHitbox, ImpulseToThis, ImpulseToOther, DamageToThis, DamageToOther);
+	//Broadcast the collision result, and tell the other hitbox to broadcast it as well.
+	OnHitboxCollision.Broadcast(CollidingHitbox, ImpulseToThis, DamageToThis);
+	CollidingHitbox->NotifyOfCollisionResult(this, ImpulseToOther, DamageToOther);
 }
 
-bool UHitbox::IsHitboxAboveThreshold(const float Threshold, const UHitbox* CollidingHitbox) const
+bool UHitbox::ShouldProcessCollision(UHitbox* OtherHitbox) const
 {
-	const float CollidingHitboxMinZ = CollidingHitbox->Bounds.Origin.Z - CollidingHitbox->Bounds.BoxExtent.Z;
-	const float HitboxMinZ = Bounds.Origin.Z - Bounds.BoxExtent.Z;
-	const float HitboxMaxZ = Bounds.Origin.Z + Bounds.BoxExtent.Z;
-	const float ZThreshold = FMath::Lerp(HitboxMinZ, HitboxMaxZ, FMath::Clamp(Threshold, 0.0f, 1.0f));
-	const bool bAboveThreshold = CollidingHitboxMinZ > ZThreshold;
+	//If two hitboxes are the same hostility, we won't process their collision.
+	if (OtherHitbox->GetHostility() == OwnerHostility)
+	{
+		return false;
+	}
+	//Otherwise, friendly > enemy > neutral for priority on who calculates collisions.
+	return OtherHitbox->GetHostility() < OwnerHostility;
+}
 
-	const FColor DEBUG_Color = bAboveThreshold ? FColor::Red : FColor::Yellow;
-	DrawDebugBox(GetWorld(), Bounds.Origin, Bounds.BoxExtent, FColor::Green, false, 2.0f, 0, 2);
-	DrawDebugBox(GetWorld(), CollidingHitbox->Bounds.Origin, CollidingHitbox->Bounds.BoxExtent, DEBUG_Color, false,2.0f, 0, 2);
-	DrawDebugLine(GetWorld(), FVector(CollidingHitbox->GetComponentLocation().X, CollidingHitbox->GetComponentLocation().Y, CollidingHitboxMinZ),
-		FVector(GetComponentLocation().X, GetComponentLocation().Y, ZThreshold), DEBUG_Color, false,2.0f, 0, 2);
-	
-	return bAboveThreshold;
+void UHitbox::ProcessCollision(UHitbox* OtherHitbox, FVector& ImpulseToThis, FVector& ImpulseToOther, float& DamageToThis, float& DamageToOther) const
+{
+	//Check if this hitbox is above the threshold to deal damage and receive a bounce from the other hitbox.
+	const float ThisHitboxMinZ = Bounds.Origin.Z - Bounds.BoxExtent.Z;
+	bool bUseOtherHitboxThreshold = true;
+	const float OtherHitboxThreshold = OtherHitbox->GetCollisionThreshold(bUseOtherHitboxThreshold);
+
+	if (!bUseOtherHitboxThreshold || ThisHitboxMinZ > OtherHitboxThreshold)
+	{
+		if (DealsCollisionDamage() && OtherHitbox->CanBeCollisionDamaged())
+		{
+			DamageToOther = GetCollisionDamageDone();
+		}
+		if (CanBeBounced() && OtherHitbox->IsBouncy())
+		{
+			ImpulseToThis = OtherHitbox->GetBounceImpulse();
+		}
+	}
+	//If we were below the threshold, we will instead receive damage and potentially bounce the other hitbox.
+	else
+	{
+		if (CanBeCollisionDamaged() && OtherHitbox->DealsCollisionDamage())
+		{
+			DamageToThis = OtherHitbox->GetCollisionDamageDone();
+		}
+		if (IsBouncy() && OtherHitbox->CanBeBounced())
+		{
+			ImpulseToOther = GetBounceImpulse();
+		}
+	}
+}
+
+bool UHitbox::CanBeCollisionDamaged() const
+{
+	return GetOwnerRole() == ROLE_Authority && bCanBeCollisionDamaged;
+}
+
+bool UHitbox::CanBeBounced() const
+{
+	return bCanBeBounced && (IsValid(OwnerAsPawn) ? OwnerAsPawn->IsLocallyControlled() : GetOwnerRole() == ROLE_Authority);
+}
+
+void UHitbox::NotifyOfCollisionResult(UHitbox* CollidingHitbox, const FVector& Bounce, const float Damage)
+{
+	OnHitboxCollision.Broadcast(CollidingHitbox, Bounce, Damage);
 }
 
 void UHitbox::SubscribeToHitboxCollision(const FHitboxCallback& Callback)
@@ -104,84 +174,6 @@ void UHitbox::UnsubscribeFromHitboxCollision(const FHitboxCallback& Callback)
 	{
 		OnHitboxCollision.Remove(Callback);
 	}
-}
-
-#pragma endregion 
-#pragma region Bounce
-
-bool UHitbox::CanBeBounced() const
-{
-	//If bouncing is disabled, no need to check owner role.
-	if (!bCanBeBounced)
-	{
-		return false;
-	}
-	//Pawns should only be bounced if they're locally controlled, since bouncing will need client prediction.
-	if (IsValid(OwnerAsPawn))
-	{
-		return OwnerAsPawn->IsLocallyControlled();
-	}
-	//If the owning actor isn't a pawn, we can bounce without care for any kind of prediction.
-	return true;
-}
-
-FVector UHitbox::GetBounceImpulse(const UHitbox* CollidingHitbox) const
-{
-	if (!bIsBouncy)
-	{
-		return FVector::ZeroVector;
-	}
-	bool bThresholdMet = true;
-	switch (BounceThresholdRequirement)
-	{
-	case EThresholdRequirement::Above :
-		bThresholdMet = IsHitboxAboveThreshold(BounceThreshold, CollidingHitbox);
-		break;
-	case EThresholdRequirement::Below :
-		bThresholdMet = !IsHitboxAboveThreshold(BounceThreshold, CollidingHitbox);
-		break;
-	default :
-		break;
-	}
-	if (!bThresholdMet)
-	{
-		return FVector::ZeroVector;
-	}
-	return BaseBounceImpulse;
-}
-
-#pragma endregion
-#pragma region Damage
-
-bool UHitbox::CanBeCollisionDamaged() const
-{
-	//Damage should only happen on the server for replicated actors.
-	return bCanBeCollisionDamaged && GetOwnerRole() == ROLE_Authority;
-}
-
-float UHitbox::GetCollisionDamageDone(const UHitbox* CollidingHitbox) const
-{
-	if (!bDealsCollisionDamage)
-	{
-		return 0.0f;
-	}
-	bool bThresholdMet = true;
-	switch (CollisionDamageThresholdRequirement)
-	{
-	case EThresholdRequirement::Above :
-		bThresholdMet = IsHitboxAboveThreshold(DamageThreshold, CollidingHitbox);
-		break;
-	case EThresholdRequirement::Below :
-		bThresholdMet = !IsHitboxAboveThreshold(DamageThreshold, CollidingHitbox);
-		break;
-	default :
-		break;
-	}
-	if (!bThresholdMet)
-	{
-		return 0.0f;
-	}
-	return BaseCollisionDamage;
 }
 
 #pragma endregion 

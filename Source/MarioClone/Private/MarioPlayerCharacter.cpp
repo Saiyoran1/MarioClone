@@ -1,50 +1,34 @@
 ﻿#include "MarioClone/Public/MarioPlayerCharacter.h"
 #include "HealthComponent.h"
 #include "Hitbox.h"
+#include "MarioMovementComponent.h"
+#include "PaperFlipbookComponent.h"
 #include "Camera/CameraComponent.h"
 #include "GameFramework/PawnMovementComponent.h"
 
 #pragma region Core
 
-AMarioPlayerCharacter::AMarioPlayerCharacter()
+AMarioPlayerCharacter::AMarioPlayerCharacter(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer.SetDefaultSubobjectClass(CharacterMovementComponentName, UMarioMovementComponent::StaticClass()))
 {
 	PrimaryActorTick.bCanEverTick = true;
 
 	Camera = CreateDefaultSubobject<UCameraComponent>(FName(TEXT("Camera")));
 	Camera->SetupAttachment(RootComponent);
 	Camera->SetUsingAbsoluteRotation(true);
-	Camera->SetWorldRotation(FRotator(0.0f));
+	Camera->SetWorldRotation(FRotator(0.0f, -90.0f, 0.0f));
 	Camera->SetRelativeLocation(FVector(0.0f, 800.0f, 100.0f));
+
+	GetSprite()->SetUsingAbsoluteRotation(true);
+	GetSprite()->SetWorldRotation(FRotator(0.0f));
 
 	PlayerHitbox = CreateDefaultSubobject<UHitbox>(FName(TEXT("Hitbox")));
 	PlayerHitbox->SetupAttachment(RootComponent);
 
 	HealthComponent = CreateDefaultSubobject<UHealthComponent>(FName(TEXT("Health")));
 	HealthComponent->SetupAttachment(RootComponent);
-}
 
-void AMarioPlayerCharacter::BeginPlay()
-{
-	Super::BeginPlay();
-
-	//Constrain movement to the Y and Z axes, since this is a 2D game.
-	GetMovementComponent()->SetPlaneConstraintEnabled(true);
-	GetMovementComponent()->SetPlaneConstraintAxisSetting(EPlaneConstraintAxisSetting::X);
-
-	//Bind to the health and life status delegates of the health component.
-	HealthCallback.BindDynamic(this, &AMarioPlayerCharacter::OnHealthChanged);
-	LifeCallback.BindDynamic(this, &AMarioPlayerCharacter::OnLifeStatusChanged);
-	HealthComponent->SubscribeToHealthChanged(HealthCallback);
-	HealthComponent->SubscribeToLifeStatusChanged(LifeCallback);
-
-	HitboxCallback.BindDynamic(this, &AMarioPlayerCharacter::OnHitboxCollision);
-	PlayerHitbox->SubscribeToHitboxCollision(HitboxCallback);
-
-	if (IsLocallyControlled())
-	{
-		//Cache off camera's initial world space offset, so that we can use it as a reference point when leading the player.
-		DesiredBaseCameraOffset = Camera->GetComponentLocation() - GetActorLocation();
-	}
+	MarioMoveComponent = Cast<UMarioMovementComponent>(GetCharacterMovement());
 }
 
 void AMarioPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -62,6 +46,83 @@ void AMarioPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInp
 	PlayerInputComponent->BindAction(FName("DEBUG_KillSelf"), IE_Pressed, this, &AMarioPlayerCharacter::DEBUG_KillSelf);
 	PlayerInputComponent->BindAction(FName("DEBUG_ReviveSelf"), IE_Pressed, this, &AMarioPlayerCharacter::DEBUG_ReviveSelf);
 #endif
+}
+
+void AMarioPlayerCharacter::BeginPlay()
+{
+	Super::BeginPlay();
+
+	//Constrain movement to the X and Z axes, since this is a 2D game.
+	GetMovementComponent()->SetPlaneConstraintEnabled(true);
+	GetMovementComponent()->SetPlaneConstraintAxisSetting(EPlaneConstraintAxisSetting::Y);
+
+	//Bind to the health and life status delegates of the health component.
+	HealthCallback.BindDynamic(this, &AMarioPlayerCharacter::OnHealthChanged);
+	LifeCallback.BindDynamic(this, &AMarioPlayerCharacter::OnLifeStatusChanged);
+	HealthComponent->SubscribeToHealthChanged(HealthCallback);
+	HealthComponent->SubscribeToLifeStatusChanged(LifeCallback);
+
+	HitboxCallback.BindDynamic(this, &AMarioPlayerCharacter::OnHitboxCollision);
+	PlayerHitbox->SubscribeToHitboxCollision(HitboxCallback);
+
+	if (IsLocallyControlled())
+	{
+		//Cache off camera's initial world space offset, so that we can use it as a reference point when leading the player.
+		DesiredBaseCameraOffset = Camera->GetComponentLocation() - GetActorLocation();
+	}
+}
+
+void AMarioPlayerCharacter::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	
+	UPaperFlipbook* Flipbook = nullptr;
+	FVector Velocity = FVector::ZeroVector;
+	if (IsValid(MarioMoveComponent))
+	{
+		Velocity = MarioMoveComponent->GetLastUpdateVelocity();
+		if (MarioMoveComponent->IsFalling())
+		{
+			Flipbook = JumpingFlipbook;
+		}
+		else
+		{
+			Flipbook = Velocity.IsNearlyZero() ? IdleFlipbook : RunningFlipbook;
+		}
+	}
+
+	//Fallback in case all flipbook was null or our movement component was null.
+	if (!IsValid(Flipbook))
+	{
+		if (IsValid(IdleFlipbook))
+		{
+			Flipbook = IdleFlipbook;
+		}
+		else if (IsValid(RunningFlipbook))
+		{
+			Flipbook = RunningFlipbook;
+		}
+		else if (IsValid(JumpingFlipbook))
+		{
+			Flipbook = JumpingFlipbook;
+		}
+	}
+	//Final check for null, if we don't have any valid flipbooks at all, do nothing.
+	if (IsValid(Flipbook))
+	{
+		GetSprite()->SetFlipbook(Flipbook);
+	}
+	
+	//Check to see whether we should flip our sprite around to move left or right.
+	if (Velocity.X != 0.0f)
+	{
+		const bool bMovingRight = Velocity.X > 0.0f;
+		if (bMovingRight != bWasMovingRight)
+		{
+			bWasMovingRight = bMovingRight;
+			GetSprite()->SetWorldRotation(FRotator(0.0f, bMovingRight ? 0.0f : 180.0f, 0.0f));
+		}
+	}
 }
 
 void AMarioPlayerCharacter::NotifyControllerChanged()
@@ -91,44 +152,12 @@ void AMarioPlayerCharacter::OnGameStateSet(AGameStateBase* GameState)
 	}
 }
 
-void AMarioPlayerCharacter::Tick(float DeltaTime)
-{
-	Super::Tick(DeltaTime);
-
-	if (IsLocallyControlled())
-	{
-		//Update camera location to lead the character when moving.
-		const float LastMoveInputY = GetMovementComponent()->GetLastInputVector().Y;
-		//If we aren't moving, we'll update how long we haven't been moving for.
-		if (LastMoveInputY == 0.0f)
-		{
-			TimeAtRest += DeltaTime;
-			//After a delay, we'll recenter the camera on the character.
-			if (TimeAtRest > CameraRecenterDelay)
-			{
-				Camera->SetWorldLocation(FMath::VInterpConstantTo(Camera->GetComponentLocation(), GetActorLocation() + DesiredBaseCameraOffset, DeltaTime, CameraRecenterSpeed));
-			}
-		}
-		//If we are moving, the camera should lead the character along the Y axis.
-		else
-		{
-			TimeAtRest = 0.0f;
-			const FVector DesiredOffset = FVector(DesiredBaseCameraOffset.X, DesiredBaseCameraOffset.Y + (LastMoveInputY * MaxCameraLeadOffset), DesiredBaseCameraOffset.Z);
-			const FVector DesiredFinalLocation = GetActorLocation() + DesiredOffset;
-			Camera->SetWorldLocation(FMath::VInterpConstantTo(Camera->GetComponentLocation(), DesiredFinalLocation, DeltaTime, CameraLeadInterpSpeed));
-		}
-	}
-
-	DrawDebugString(GetWorld(), GetActorLocation() + FVector::UpVector * 100.0f,
-		FString::Printf(L"%i/%i", FMath::RoundToInt(HealthComponent->GetCurrentHealth()), FMath::RoundToInt(HealthComponent->GetMaxHealth())), 0, FColor::Red, 0);
-}
-
 #pragma endregion 
 #pragma region Movement
 
 void AMarioPlayerCharacter::MovementInput(const float AxisValue)
 {
-	GetMovementComponent()->AddInputVector(FVector(0.0f, 1.0f, 0.0f) * AxisValue);
+	GetMovementComponent()->AddInputVector(FVector(1.0f, 0.0f, 0.0f) * AxisValue);
 }
 
 void AMarioPlayerCharacter::JumpPressed()
@@ -164,9 +193,9 @@ void AMarioPlayerCharacter::OnLifeStatusChanged(const bool bNewLifeStatus)
 
 void AMarioPlayerCharacter::OnHitboxCollision(UHitbox* CollidingHitbox, const FVector& BounceImpulse, const float DamageValue)
 {
-	if (IsLocallyControlled() && BounceImpulse != FVector::ZeroVector)
+	if (IsLocallyControlled() && IsValid(MarioMoveComponent) && !BounceImpulse.IsNearlyZero())
 	{
-		LaunchCharacter(BounceImpulse, false, true);
+		MarioMoveComponent->TriggerBounce(PlayerHitbox->GetHitboxID(), CollidingHitbox->GetHitboxID());
 	}
 	if (HasAuthority() && IsValid(HealthComponent) && DamageValue != 0.0f)
 	{

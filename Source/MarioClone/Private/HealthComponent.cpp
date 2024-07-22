@@ -17,6 +17,13 @@ UHealthComponent::UHealthComponent()
 void UHealthComponent::InitializeComponent()
 {
 	Super::InitializeComponent();
+
+	//InitializeComponent also runs in the editor when loading the owning actor.
+	//Check here that we are actually in the game.
+	if (!IsValid(GetWorld()) || !GetWorld()->IsGameWorld())
+	{
+		return;
+	}
 	
 	//Clamp max health above 1 before initializing current health.
 	MaxHealth = FMath::Max(MaxHealth, 1.0f);

@@ -31,5 +31,7 @@ private:
 	UFUNCTION()
 	void UpdateLife(const bool bNewLifeStatus);
 
+	bool bInitialized = false;
+
 	void UpdateHealthVisuals();
 };
