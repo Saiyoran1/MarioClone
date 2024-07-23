@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "CoreMinimal.h"
 #include "CombatInterface.h"
+#include "HealthComponent.h"
 #include "Hitbox.h"
 #include "PaperCharacter.h"
 #include "NPCCharacter.generated.h"
@@ -21,6 +22,25 @@ public:
 
 private:
 
+	UPROPERTY()
+	AMarioGameState* GameStateRef = nullptr;
+	FDelegateHandle GameStateDelegateHandle;
+	UFUNCTION()
+	void OnGameStateSet(AGameStateBase* GameState);
+	void BindToGameStartEnd();
+	FGameStartCallback GameStartCallback;
+	UFUNCTION()
+	void OnGameStart();
+	FGameEndCallback GameEndCallback;
+	UFUNCTION()
+	void OnGameEnd(const bool bGameWon) { DisableNPC(); }
+	FVector CachedStartLocation;
+	FRotator CachedStartRotation;
+	
+	void DisableNPC();
+	void EnableNPC();
+	bool bIsEnabled = true;
+
 	UPROPERTY(VisibleAnywhere, meta = (AllowPrivateAccess = "true"))
 	UHitbox* Hitbox = nullptr;
 	FHitboxCallback HitboxCallback;
@@ -29,6 +49,9 @@ private:
 	
 	UPROPERTY(VisibleAnywhere, meta = (AllowPrivateAccess = "true"))
 	UHealthComponent* HealthComponent = nullptr;
+	FLifeCallback LifeCallback;
+	UFUNCTION()
+	void OnLifeStatusChanged(const bool bNewLifeStatus);
 
 	UPROPERTY(EditAnywhere, Category = "Hostility")
 	EHostility Hostility = EHostility::Enemy;

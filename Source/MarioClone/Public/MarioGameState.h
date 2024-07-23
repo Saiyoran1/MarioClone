@@ -38,6 +38,8 @@ private:
 #pragma region Match State
 
 public:
+
+	bool HasGameEnded() const { return GetMatchState() == LossState || GetMatchState() == WinState; }
 	
 	//Called from the win or loss screen to reset the game.
 	void RequestRestartGame();

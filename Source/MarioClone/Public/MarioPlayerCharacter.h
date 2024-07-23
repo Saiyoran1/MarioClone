@@ -26,38 +26,22 @@ class MARIOCLONE_API AMarioPlayerCharacter : public APaperCharacter, public ICom
 public:
 	
 	AMarioPlayerCharacter(const FObjectInitializer& ObjectInitializer);
-	virtual void BeginPlay() override;
-	virtual void Tick(float DeltaSeconds) override;
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 	virtual void NotifyControllerChanged() override;
-	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+	virtual void BeginPlay() override;
+	virtual void Tick(float DeltaSeconds) override;
 
 private:
 
 	UPROPERTY()
 	AMarioGameState* GameStateRef = nullptr;
+	FDelegateHandle GameStateDelegateHandle;
 	UFUNCTION()
 	void OnGameStateSet(AGameStateBase* GameState);
-	FDelegateHandle GameStateDelegateHandle;
-	FGameStartCallback GameStartCallback;
-	UFUNCTION()
-	void OnGameStarted();
-	
-	FGameEndCallback GameEndCallback;
-	UFUNCTION()
-	void OnGameEnded(const bool bGameWon);
-	UPROPERTY(EditDefaultsOnly, Category = "UI")
-	TSubclassOf<UGameOverScreen> GameOverScreenClass;
-	UPROPERTY()
-	UGameOverScreen* GameOverScreen = nullptr;
-	FRestartCallback RestartCallback;
-	UFUNCTION()
-	void RestartRequested() { Server_RequestRestart(); }
-	UFUNCTION(Server, Reliable)
-	void Server_RequestRestart();
 
-	void DisablePlayer();
 	void EnablePlayer();
+	void DisablePlayer();
 	bool bIsEnabled = true;
 
 	UPROPERTY()
@@ -69,6 +53,30 @@ private:
 	UPlayerHUD* HUD;
 
 #pragma endregion
+#pragma region Game Flow
+
+private:
+
+	FGameStartCallback GameStartCallback;
+	UFUNCTION()
+	void OnGameStarted();
+	
+	FGameEndCallback GameEndCallback;
+	UFUNCTION()
+	void OnGameEnded(const bool bGameWon);
+	
+	UPROPERTY(EditDefaultsOnly, Category = "UI")
+	TSubclassOf<UGameOverScreen> GameOverScreenClass;
+	UPROPERTY()
+	UGameOverScreen* GameOverScreen = nullptr;
+	
+	FRestartCallback RestartCallback;
+	UFUNCTION()
+	void RestartRequested() { Server_RequestRestart(); }
+	UFUNCTION(Server, Reliable)
+	void Server_RequestRestart();
+
+#pragma endregion 
 #pragma region Animations
 
 private:
