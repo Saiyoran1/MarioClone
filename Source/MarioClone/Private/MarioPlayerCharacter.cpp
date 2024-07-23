@@ -247,6 +247,7 @@ void AMarioPlayerCharacter::EnablePlayer()
 	{
 		PlayerHitbox->EnableHitbox();
 	}
+	bImmune = false;
 
 	bIsEnabled = true;
 }
@@ -284,6 +285,7 @@ void AMarioPlayerCharacter::DisablePlayer()
 		PlayerHitbox->DisableHitbox();
 	}
 	//If we were immune, clear the immunity timer.
+	bImmune = false;
 	if (GetWorldTimerManager().IsTimerActive(ImmunityHandle))
 	{
 		GetWorldTimerManager().ClearTimer(ImmunityHandle);

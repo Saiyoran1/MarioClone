@@ -8,13 +8,13 @@ FName AMarioGameState::WinState = FName(TEXT("WonGame"));
 
 #pragma region Match State
 
-void AMarioGameState::RequestRestartGame()
+void AMarioGameState::GoalReached()
 {
 	if (!HasAuthority())
 	{
 		return;
 	}
-	SetMatchState(PlayState);
+	SetMatchState(WinState);
 }
 
 void AMarioGameState::PlayerExhaustedLives()
@@ -24,6 +24,15 @@ void AMarioGameState::PlayerExhaustedLives()
 		return;
 	}
 	SetMatchState(LossState);
+}
+
+void AMarioGameState::RequestRestartGame()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	SetMatchState(PlayState);
 }
 
 void AMarioGameState::OnRep_MatchState()

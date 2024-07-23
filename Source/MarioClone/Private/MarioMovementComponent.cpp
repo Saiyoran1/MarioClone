@@ -1,6 +1,7 @@
 ﻿#include "MarioMovementComponent.h"
 #include "HitboxManager.h"
 #include "GameFramework/Character.h"
+#include "GameFramework/PlayerState.h"
 
 #pragma region SavedMove
 
@@ -145,7 +146,13 @@ void UMarioMovementComponent::UpdateCharacterStateBeforeMovement(float DeltaSeco
 	if (bWantsBounce)
 	{
 		bWantsBounce = false;
-		if (IsValid(HitboxManager) && HitboxManager->SanityCheckBounce(ThisBounceBoxID, OtherBounceBoxID))
+		float PingCompensation = 0.0f;
+		const APlayerState* PlayerState = GetCharacterOwner()->GetPlayerState();
+		if (IsValid(PlayerState))
+		{
+			PingCompensation = PlayerState->GetPingInMilliseconds() / 1000.0f;
+		}
+		if (IsValid(HitboxManager) && (GetOwnerRole() != ROLE_Authority || HitboxManager->SanityCheckBounce(ThisBounceBoxID, OtherBounceBoxID, PingCompensation)))
 		{
 			const FVector BounceImpulse = HitboxManager->GetBounceImpulseForHitbox(OtherBounceBoxID);
 			if (BounceImpulse != FVector::ZeroVector)

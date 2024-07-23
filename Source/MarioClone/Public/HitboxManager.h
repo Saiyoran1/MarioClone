@@ -16,7 +16,7 @@ public:
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 	
 	FVector GetBounceImpulseForHitbox(const int32 HitboxID) const;
-	bool SanityCheckBounce(const int32 HitboxIDA, const int32 HitboxIDB) const;
+	bool SanityCheckBounce(const int32 HitboxIDA, const int32 HitboxIDB, const float PingTime) const;
 	int32 RegisterNewHitbox(const UHitbox* Hitbox);
 	void RegisterNewHitbox(const UHitbox* Hitbox, const int32 ID);
 

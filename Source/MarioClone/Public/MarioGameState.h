@@ -40,11 +40,13 @@ private:
 public:
 
 	bool HasGameEnded() const { return GetMatchState() == LossState || GetMatchState() == WinState; }
-	
-	//Called from the win or loss screen to reset the game.
-	void RequestRestartGame();
+
+	//Called when a player reaches the level goal, winning the game.
+	void GoalReached();
 	//Called when a player runs out of lives, to end the game in a loss.
 	void PlayerExhaustedLives();
+	//Called from the win or loss screen to reset the game.
+	void RequestRestartGame();
 
 	void SubscribeToGameStarted(const FGameStartCallback& Callback);
 	void UnsubscribeFromGameStarted(const FGameStartCallback& Callback);

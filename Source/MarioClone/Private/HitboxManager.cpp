@@ -24,7 +24,7 @@ FVector UHitboxManager::GetBounceImpulseForHitbox(const int32 HitboxID) const
 	}
 }
 
-bool UHitboxManager::SanityCheckBounce(const int32 HitboxIDA, const int32 HitboxIDB) const
+bool UHitboxManager::SanityCheckBounce(const int32 HitboxIDA, const int32 HitboxIDB, const float PingTime) const
 {
 	const UHitbox* HitboxA = HitboxMap.FindRef(HitboxIDA);
 	if (!IsValid(HitboxA))
@@ -36,12 +36,15 @@ bool UHitboxManager::SanityCheckBounce(const int32 HitboxIDA, const int32 Hitbox
 	{
 		return false;
 	}
-	//On the server we will give a lot of leeway so that latency doesn't prevent us from bouncing.
+	//We will give a lot of leeway so that latency doesn't prevent us from bouncing.
 	//This is a trade-off between cheat-proofing accuracy and latency tolerance. A rewinding system would be better but out of scope for now.
-	const float ToleranceMultiplier = GetWorld()->GetNetMode() < NM_Client ? 2.0f : 1.0f;
+	const float ToleranceMultiplier = 3.0f;
+	//We also add a bit more leeway in the form of checking velocity of both actors. If they were moving in opposite directions, its possible that the distance they've moved while the RPC was sent is large.
+	//This is generous in that it always assumes the hitboxes were moving away from each other at whatever speed they're travelling right now.
+	const float PossibleMoveDistance = (HitboxA->GetOwner()->GetVelocity() * PingTime).Size() + (HitboxB->GetOwner()->GetVelocity() * PingTime).Size();
 	//There is additionally some tolerance built in here because we just get the bounds radius, which is the widest possible distance these two boxes could be from each other without regard for direction.
 	return FVector::DistSquared(HitboxA->GetComponentLocation(), HitboxB->GetComponentLocation())
-		< FMath::Square((HitboxA->Bounds.SphereRadius + HitboxB->Bounds.SphereRadius) * ToleranceMultiplier);
+		< FMath::Square((HitboxA->Bounds.SphereRadius + HitboxB->Bounds.SphereRadius + PossibleMoveDistance) * ToleranceMultiplier);
 }
 
 int32 UHitboxManager::RegisterNewHitbox(const UHitbox* Hitbox)

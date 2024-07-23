@@ -80,6 +80,12 @@ void UHitbox::DisableHitbox()
 	SetCollisionEnabled(ECollisionEnabled::NoCollision);
 }
 
+float UHitbox::GetCollisionThreshold(bool& bOutUseThreshold) const
+{
+	bOutUseThreshold = bUseCollisionThreshold;
+	return FMath::Lerp(Bounds.Origin.Z - Bounds.BoxExtent.Z, Bounds.Origin.Z + Bounds.BoxExtent.Z, CollisionThreshold);
+}
+
 #pragma endregion
 #pragma region Collision
 
