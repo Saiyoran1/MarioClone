@@ -23,6 +23,7 @@ AMarioPlayerCharacter::AMarioPlayerCharacter(const FObjectInitializer& ObjectIni
 
 	GetSprite()->SetUsingAbsoluteRotation(true);
 	GetSprite()->SetWorldRotation(FRotator(0.0f));
+	CachedSpriteMaterial = GetSprite()->GetMaterial(0);
 
 	PlayerHitbox = CreateDefaultSubobject<UHitbox>(FName(TEXT("Hitbox")));
 	PlayerHitbox->SetupAttachment(RootComponent);
@@ -104,6 +105,15 @@ void AMarioPlayerCharacter::Tick(float DeltaSeconds)
 	if (IsValid(HealthComponent) && !HealthComponent->IsAlive())
 	{
 		return;
+	}
+
+	if (bImmune && IsValid(DynamicSpriteFlashMaterial))
+	{
+		TimeSinceImmunityStart += DeltaSeconds;
+		const float Frequency = NumSpriteFlashCycles / PostHitImmunityWindow;
+		//Shamelessly stolen sine function from stackoverflow to make opacity pulse.
+		const float Opacity = 0.5f * (1 + FMath::Sin(2 * PI * Frequency * TimeSinceImmunityStart));
+		DynamicSpriteFlashMaterial->SetScalarParameterValue(FName("Opacity"), Opacity);
 	}
 	
 	UPaperFlipbook* Flipbook = nullptr;
@@ -187,6 +197,7 @@ void AMarioPlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
 	DOREPLIFETIME_CONDITION(AMarioPlayerCharacter, CurrentLives, COND_OwnerOnly);
+	DOREPLIFETIME(AMarioPlayerCharacter, bImmune);
 }
 
 void AMarioPlayerCharacter::OnGameStateSet(AGameStateBase* GameState)
@@ -312,6 +323,11 @@ void AMarioPlayerCharacter::DisablePlayer()
 	{
 		PlayerHitbox->DisableHitbox();
 	}
+	//If we were immune, clear the immunity timer.
+	if (GetWorldTimerManager().IsTimerActive(ImmunityHandle))
+	{
+		GetWorldTimerManager().ClearTimer(ImmunityHandle);
+	}
 
 	bIsEnabled = false;
 }
@@ -339,11 +355,61 @@ void AMarioPlayerCharacter::JumpReleased()
 
 void AMarioPlayerCharacter::OnHealthChanged(const float PreviousHealth, const float CurrentHealth, const float MaxHealth)
 {
-	//If we took damage, we need to reset our health regen timer and become briefly immune to damage.
-	if (CurrentHealth < PreviousHealth)
+	//If we took damage, we should briefly become immune to damage.
+	if (HasAuthority() && bIsEnabled
+		&& CurrentHealth < PreviousHealth && CurrentHealth > 0.0f
+		&& PostHitImmunityWindow > 0.0f)
 	{
-		//TODO: Server health regeneration
-		//TODO: All machines, play a hit reaction (if we didn't hit 0 health here).
+		bImmune = true;
+		OnRep_bImmune();
+		GetWorldTimerManager().SetTimer(ImmunityHandle, this, &AMarioPlayerCharacter::EndImmunity, 1.0f);
+	}
+}
+
+void AMarioPlayerCharacter::EndImmunity()
+{
+	if (GetWorldTimerManager().IsTimerActive(ImmunityHandle))
+	{
+		GetWorldTimerManager().ClearTimer(ImmunityHandle);
+	}
+	bImmune = false;
+	OnRep_bImmune();
+}
+
+void AMarioPlayerCharacter::OnRep_bImmune()
+{
+	if (bIsEnabled)
+	{
+		if (bImmune)
+		{
+			if (IsValid(PlayerHitbox))
+			{
+				PlayerHitbox->DisableHitbox();
+			}
+			if (IsValid(GetSprite()) && IsValid(SpriteFlashMaterial))
+			{
+				DynamicSpriteFlashMaterial = UMaterialInstanceDynamic::Create(SpriteFlashMaterial, this);
+				if (IsValid(DynamicSpriteFlashMaterial))
+				{
+					TimeSinceImmunityStart = 0.0f;
+					CachedSpriteMaterial = GetSprite()->GetMaterial(0);
+					GetSprite()->SetMaterial(0, DynamicSpriteFlashMaterial);
+				}
+			}
+		}
+		else
+		{
+			if (IsValid(PlayerHitbox))
+			{
+				PlayerHitbox->EnableHitbox();
+			}
+			if (IsValid(GetSprite()))
+			{
+				GetSprite()->SetMaterial(0, CachedSpriteMaterial);
+				DynamicSpriteFlashMaterial = nullptr;
+				TimeSinceImmunityStart = 0.0f;
+			}
+		}
 	}
 }
 

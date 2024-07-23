@@ -132,15 +132,6 @@ public:
 private:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Health")
-	bool bRegenerateHealth = true;
-	UPROPERTY(EditDefaultsOnly, Category = "Health", meta = (EditCondition = "bRegenerateHealth", ClampMin = "0"))
-	float InitialHealthRegenDelay = 5.0f;
-	UPROPERTY(EditDefaultsOnly, Category = "Health", meta = (EditCondition = "bRegenerateHealth", ClampMin = "0"))
-	float HealthRegenerationTickRate = 1.0f;
-	UPROPERTY(EditDefaultsOnly, Category = "Health", meta = (EditCondition = "bRegenerateHealth", ClampMin = "0"))
-	float HealthRegenerationTickSize = 1.0f;
-
-	UPROPERTY(EditDefaultsOnly, Category = "Health")
 	int32 MaxLives = 3;
 	UPROPERTY(EditDefaultsOnly, Category = "Health")
 	float RespawnDelay = 2.0f;
@@ -168,6 +159,26 @@ private:
 	FVector CachedSpawnLocation;
 	FRotator CachedSpawnRotation;
 	FLivesNotification OnLivesChanged;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Health")
+	float PostHitImmunityWindow = 1.5f;
+	UPROPERTY(EditDefaultsOnly, Category = "Health")
+	UMaterialInstance* SpriteFlashMaterial = nullptr;
+
+	UPROPERTY(ReplicatedUsing = OnRep_bImmune)
+	bool bImmune = false;
+	UFUNCTION()
+	void OnRep_bImmune();
+	FTimerHandle ImmunityHandle;
+	UFUNCTION()
+	void EndImmunity();
+	UPROPERTY()
+	UMaterialInstanceDynamic* DynamicSpriteFlashMaterial = nullptr;
+	static constexpr int NumSpriteFlashCycles = 3;
+	float SpriteFlashOpacity = 0.0f;
+	float TimeSinceImmunityStart = 0.0f;
+	UPROPERTY()
+	UMaterialInterface* CachedSpriteMaterial = nullptr;
 	
 #if WITH_EDITOR
 	UFUNCTION()
