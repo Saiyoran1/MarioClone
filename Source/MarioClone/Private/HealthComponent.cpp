@@ -1,5 +1,5 @@
 ﻿#include "HealthComponent.h"
-#include "FloatingHealthBar.h"
+#include "UI/FloatingHealthBar.h"
 #include "MarioGameState.h"
 #include "MarioPlayerCharacter.h"
 #include "Net/UnrealNetwork.h"

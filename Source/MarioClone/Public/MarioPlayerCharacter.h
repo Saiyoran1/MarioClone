@@ -5,12 +5,16 @@
 #include "Hitbox.h"
 #include "PaperCharacter.h"
 #include "PaperFlipbook.h"
-
+#include "UI/GameOverScreen.h"
 #include "MarioPlayerCharacter.generated.h"
 
+class UPlayerHUD;
 class UMarioMovementComponent;
 class UHealthComponent;
 class UCameraComponent;
+
+DECLARE_DYNAMIC_DELEGATE_OneParam(FLivesCallback, const int32, NewLives);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FLivesNotification, const int32, NewLives);
 
 UCLASS()
 class MARIOCLONE_API AMarioPlayerCharacter : public APaperCharacter, public ICombatInterface
@@ -26,12 +30,43 @@ public:
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 	virtual void NotifyControllerChanged() override;
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 private:
 
+	UPROPERTY()
+	AMarioGameState* GameStateRef = nullptr;
 	UFUNCTION()
 	void OnGameStateSet(AGameStateBase* GameState);
 	FDelegateHandle GameStateDelegateHandle;
+	FGameStartCallback GameStartCallback;
+	UFUNCTION()
+	void OnGameStarted();
+	
+	FGameEndCallback GameEndCallback;
+	UFUNCTION()
+	void OnGameEnded(const bool bGameWon);
+	UPROPERTY(EditDefaultsOnly, Category = "UI")
+	TSubclassOf<UGameOverScreen> GameOverScreenClass;
+	UPROPERTY()
+	UGameOverScreen* GameOverScreen = nullptr;
+	FRestartCallback RestartCallback;
+	UFUNCTION()
+	void RestartRequested() { Server_RequestRestart(); }
+	UFUNCTION(Server, Reliable)
+	void Server_RequestRestart();
+
+	void DisablePlayer();
+	void EnablePlayer();
+	bool bIsEnabled = true;
+
+	UPROPERTY()
+	APlayerController* PlayerController = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, Category = "UI")
+	TSubclassOf<UPlayerHUD> HUDClass;
+	UPROPERTY()
+	UPlayerHUD* HUD;
 
 #pragma endregion
 #pragma region Animations
@@ -87,6 +122,12 @@ private:
 public:
 
 	virtual UHealthComponent* GetHealthComponent_Implementation() const override { return HealthComponent; }
+	
+	int32 GetMaxLives() const { return MaxLives; }
+	int32 GetCurrentLives() const { return CurrentLives; }
+
+	void SubscribeToLivesChanged(const FLivesCallback& Callback);
+	void UnsubscribeFromLivesChanged(const FLivesCallback& Callback);
 
 private:
 
@@ -98,6 +139,11 @@ private:
 	float HealthRegenerationTickRate = 1.0f;
 	UPROPERTY(EditDefaultsOnly, Category = "Health", meta = (EditCondition = "bRegenerateHealth", ClampMin = "0"))
 	float HealthRegenerationTickSize = 1.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Health")
+	int32 MaxLives = 3;
+	UPROPERTY(EditDefaultsOnly, Category = "Health")
+	float RespawnDelay = 2.0f;
 
 	UPROPERTY(VisibleAnywhere)
 	UHealthComponent* HealthComponent = nullptr;
@@ -111,6 +157,17 @@ private:
 	
 	bool bRegeneratingHealth = false;
 	FTimerHandle HealthRegenHandle;
+
+	UPROPERTY(ReplicatedUsing = OnRep_CurrentLives)
+	int32 CurrentLives = 0;
+	UFUNCTION()
+	void OnRep_CurrentLives();
+	FTimerHandle RespawnHandle;
+	UFUNCTION()
+	void Respawn();
+	FVector CachedSpawnLocation;
+	FRotator CachedSpawnRotation;
+	FLivesNotification OnLivesChanged;
 	
 #if WITH_EDITOR
 	UFUNCTION()

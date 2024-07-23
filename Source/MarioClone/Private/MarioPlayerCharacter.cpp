@@ -5,6 +5,8 @@
 #include "PaperFlipbookComponent.h"
 #include "Camera/CameraComponent.h"
 #include "GameFramework/PawnMovementComponent.h"
+#include "Net/UnrealNetwork.h"
+#include "UI/PlayerHUD.h"
 
 #pragma region Core
 
@@ -52,6 +54,12 @@ void AMarioPlayerCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
+	CurrentLives = MaxLives;
+	OnLivesChanged.Broadcast(CurrentLives);
+	RespawnDelay = FMath::Max(0.0f, RespawnDelay);
+	CachedSpawnLocation = GetActorLocation();
+	CachedSpawnRotation = GetActorRotation();
+	
 	//Constrain movement to the X and Z axes, since this is a 2D game.
 	GetMovementComponent()->SetPlaneConstraintEnabled(true);
 	GetMovementComponent()->SetPlaneConstraintAxisSetting(EPlaneConstraintAxisSetting::Y);
@@ -70,11 +78,33 @@ void AMarioPlayerCharacter::BeginPlay()
 		//Cache off camera's initial world space offset, so that we can use it as a reference point when leading the player.
 		DesiredBaseCameraOffset = Camera->GetComponentLocation() - GetActorLocation();
 	}
+
+	//Subscribe to the GameState's GameStart and GameEnd delegates.
+	if (HasAuthority() || IsLocallyControlled())
+	{
+		if (!IsValid(GameStateRef))
+		{
+			GameStateRef = Cast<AMarioGameState>(GetWorld()->GetGameState());
+		}
+		if (IsValid(GameStateRef))
+		{
+			GameStartCallback.BindDynamic(this, &AMarioPlayerCharacter::OnGameStarted);
+			GameStateRef->SubscribeToGameStarted(GameStartCallback);
+			GameEndCallback.BindDynamic(this, &AMarioPlayerCharacter::OnGameEnded);
+			GameStateRef->SubscribeToGameEnded(GameEndCallback);
+		}
+	}
 }
 
 void AMarioPlayerCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+
+	//If the player is dead, we can early exit here and not try to adjust our sprite.
+	if (IsValid(HealthComponent) && !HealthComponent->IsAlive())
+	{
+		return;
+	}
 	
 	UPaperFlipbook* Flipbook = nullptr;
 	FVector Velocity = FVector::ZeroVector;
@@ -130,26 +160,160 @@ void AMarioPlayerCharacter::NotifyControllerChanged()
 	Super::NotifyControllerChanged();
 	if (Controller.Get() && Controller->IsLocalPlayerController())
 	{
-		AMarioGameState* GameState = Cast<AMarioGameState>(GetWorld()->GetGameState());
-		if (IsValid(GameState))
+		PlayerController = Cast<APlayerController>(Controller.Get());
+		GameStateRef = Cast<AMarioGameState>(GetWorld()->GetGameState());
+		if (IsValid(GameStateRef))
 		{
-			GameState->InitializePlayer(this);
+			GameStateRef->InitializePlayer(this);
 		}
 		else
 		{
 			GameStateDelegateHandle = GetWorld()->GameStateSetEvent.AddUObject(this, &AMarioPlayerCharacter::OnGameStateSet);
 		}
 	}
+	if (!IsValid(HUD) && IsValid(PlayerController) && IsValid(HUDClass))
+	{
+		HUD = CreateWidget<UPlayerHUD>(PlayerController, HUDClass);
+		if (IsValid(HUD))
+		{
+			HUD->AddToViewport();
+			HUD->Init(this);
+		}
+	}
+}
+
+void AMarioPlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME_CONDITION(AMarioPlayerCharacter, CurrentLives, COND_OwnerOnly);
 }
 
 void AMarioPlayerCharacter::OnGameStateSet(AGameStateBase* GameState)
 {
-	AMarioGameState* MarioGameState = Cast<AMarioGameState>(GetWorld()->GetGameState());
-	if (IsValid(MarioGameState))
+	GameStateRef = Cast<AMarioGameState>(GetWorld()->GetGameState());
+	if (IsValid(GameStateRef))
 	{
 		GetWorld()->GameStateSetEvent.Remove(GameStateDelegateHandle);
-		MarioGameState->InitializePlayer(this);
+		GameStateRef->InitializePlayer(this);
 	}
+}
+
+void AMarioPlayerCharacter::OnGameStarted()
+{
+	if (HasAuthority())
+	{
+		CurrentLives = MaxLives;
+		OnRep_CurrentLives();
+		Respawn();
+	}
+	if (!bIsEnabled)
+	{
+		EnablePlayer();
+	}
+	if (IsLocallyControlled() && IsValid(GameOverScreen))
+	{
+		GameOverScreen->RemoveFromParent();
+		GameOverScreen = nullptr;
+		if (IsValid(PlayerController))
+		{
+			PlayerController->SetInputMode(FInputModeGameOnly());
+			PlayerController->SetShowMouseCursor(false);
+		}
+	}
+}
+
+void AMarioPlayerCharacter::OnGameEnded(const bool bGameWon)
+{
+	DisablePlayer();
+	if (IsLocallyControlled() && IsValid(PlayerController) && !IsValid(GameOverScreen) && IsValid(GameOverScreenClass))
+	{
+		GameOverScreen = CreateWidget<UGameOverScreen>(PlayerController, GameOverScreenClass);
+		if (IsValid(GameOverScreen))
+		{
+			GameOverScreen->AddToViewport();
+			PlayerController->SetInputMode(FInputModeUIOnly());
+			PlayerController->SetShowMouseCursor(true);
+			if (!RestartCallback.IsBound())
+			{
+				RestartCallback.BindDynamic(this, &AMarioPlayerCharacter::AMarioPlayerCharacter::RestartRequested);
+			}
+			GameOverScreen->Init(bGameWon, RestartCallback);
+		}
+	}
+}
+
+void AMarioPlayerCharacter::Server_RequestRestart_Implementation()
+{
+	if (!IsValid(GameStateRef))
+	{
+		GameStateRef = Cast<AMarioGameState>(GetWorld()->GetGameState());
+	}
+	if (IsValid(GameStateRef))
+	{
+		GameStateRef->RequestRestartGame();
+	}
+}
+
+void AMarioPlayerCharacter::EnablePlayer()
+{
+	//Reset flipbook and rotation.
+	if (IsValid(GetSprite()))
+	{
+		if (IsValid(IdleFlipbook))
+		{
+			GetSprite()->SetFlipbook(IdleFlipbook);
+		}
+		GetSprite()->SetWorldRotation(FRotator(0.0f, 0.0f, 0.0f));
+		bWasMovingRight = true;
+	}
+	//Re-enable movement.
+	if (IsValid(MarioMoveComponent))
+	{
+		MarioMoveComponent->SetMovementMode(MOVE_Falling);
+	}
+	//Re-enable input
+	if (IsLocallyControlled() && IsValid(PlayerController))
+	{
+		EnableInput(PlayerController);
+	}
+	//Re-enable hitbox collision
+	if (IsValid(PlayerHitbox))
+	{
+		PlayerHitbox->EnableHitbox();
+	}
+
+	bIsEnabled = true;
+}
+
+void AMarioPlayerCharacter::DisablePlayer()
+{
+	//Discount death pose.
+	if (IsValid(GetSprite()))
+	{
+		if (IsValid(IdleFlipbook))
+		{
+			GetSprite()->SetFlipbook(IdleFlipbook);
+		}
+		GetSprite()->SetWorldRotation(FRotator(90.0f, GetSprite()->GetComponentRotation().Yaw, 0.0f));
+	}
+	//Disable movement.
+	if (IsValid(MarioMoveComponent))
+	{
+		MarioMoveComponent->DisableMovement();
+	}
+	//Disable input.
+	if (IsLocallyControlled() && IsValid(PlayerController))
+	{
+		DisableInput(PlayerController);
+	}
+	//Disable hitbox collision.
+	if (IsValid(PlayerHitbox))
+	{
+		PlayerHitbox->DisableHitbox();
+	}
+
+	bIsEnabled = false;
 }
 
 #pragma endregion 
@@ -185,7 +349,69 @@ void AMarioPlayerCharacter::OnHealthChanged(const float PreviousHealth, const fl
 
 void AMarioPlayerCharacter::OnLifeStatusChanged(const bool bNewLifeStatus)
 {
-	//TODO: Play death animation, stop input, timer for respawn?
+	//Respawning logic
+	if (bNewLifeStatus)
+	{
+		EnablePlayer();
+		//Cancel the respawn timer in case we respawned from something else (game restarting, etc.).
+		if (HasAuthority())
+		{
+			if (GetWorldTimerManager().IsTimerActive(RespawnHandle))
+			{
+				GetWorldTimerManager().ClearTimer(RespawnHandle);
+			}
+		}
+	}
+	//Dying logic
+	else
+	{
+		DisablePlayer();	
+		//Subtract lives, start respawn timer or end the game.
+		if (HasAuthority())
+		{
+			CurrentLives--;
+			OnRep_CurrentLives();
+			if (CurrentLives <= 0)
+			{
+				AMarioGameState* GameState = Cast<AMarioGameState>(GetWorld()->GetGameState());
+				if (IsValid(GameState))
+				{
+					GameState->PlayerExhaustedLives();
+				}
+			}
+			else
+			{
+				GetWorldTimerManager().SetTimer(RespawnHandle, this, &AMarioPlayerCharacter::Respawn, RespawnDelay);
+			}
+		}
+	}
+}
+
+void AMarioPlayerCharacter::Respawn()
+{
+	TeleportTo(CachedSpawnLocation, CachedSpawnRotation);
+	HealthComponent->ResetHealth();
+}
+
+void AMarioPlayerCharacter::OnRep_CurrentLives()
+{
+	OnLivesChanged.Broadcast(CurrentLives);
+}
+
+void AMarioPlayerCharacter::SubscribeToLivesChanged(const FLivesCallback& Callback)
+{
+	if (Callback.IsBound())
+	{
+		OnLivesChanged.AddUnique(Callback);
+	}
+}
+
+void AMarioPlayerCharacter::UnsubscribeFromLivesChanged(const FLivesCallback& Callback)
+{
+	if (Callback.IsBound())
+	{
+		OnLivesChanged.Remove(Callback);
+	}
 }
 
 #pragma endregion

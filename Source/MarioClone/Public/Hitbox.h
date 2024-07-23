@@ -43,6 +43,9 @@ private:
 
 public:
 
+	void EnableHitbox();
+	void DisableHitbox();
+	
 	float GetCollisionThreshold(bool& bOutUseThreshold) const { bOutUseThreshold = bUseCollisionThreshold; return CollisionThreshold; }
 	
 	bool IsBouncy() const { return bIsBouncy; }

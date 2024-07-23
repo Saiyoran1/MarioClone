@@ -70,6 +70,16 @@ void UHitbox::OnRep_HitboxID()
 	}
 }
 
+void UHitbox::EnableHitbox()
+{
+	SetCollisionProfileName(HitboxProfile);
+}
+
+void UHitbox::DisableHitbox()
+{
+	SetCollisionEnabled(ECollisionEnabled::NoCollision);
+}
+
 #pragma endregion
 #pragma region Collision
 
