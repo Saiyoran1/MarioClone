@@ -6,6 +6,21 @@
 #include "PaperCharacter.h"
 #include "NPCCharacter.generated.h"
 
+class ARespawnIndicator;
+
+USTRUCT()
+struct FRespawnInfo
+{
+	GENERATED_BODY();
+
+	UPROPERTY()
+	bool bRespawning = false;
+	UPROPERTY()
+	float RespawnTime = -1.0f;
+	UPROPERTY()
+	FVector RespawnLocation = FVector::ZeroVector;
+};
+
 UCLASS()
 class MARIOCLONE_API ANPCCharacter : public APaperCharacter, public ICombatInterface
 {
@@ -16,10 +31,13 @@ public:
 	ANPCCharacter();
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	virtual EHostility GetHostility_Implementation() const override { return Hostility; }
 	virtual UHealthComponent* GetHealthComponent_Implementation() const override { return HealthComponent; }
 	virtual void InstantKill_Implementation() override;
+
+	float GetRespawnTime() const { return RespawnInfo.bRespawning ? RespawnInfo.RespawnTime : -1.0f; }
 
 private:
 
@@ -34,7 +52,7 @@ private:
 	void OnGameStart();
 	FGameEndCallback GameEndCallback;
 	UFUNCTION()
-	void OnGameEnd(const bool bGameWon) { DisableNPC(); }
+	void OnGameEnd(const bool bGameWon);
 	FVector CachedStartLocation;
 	FRotator CachedStartRotation;
 	
@@ -75,4 +93,23 @@ private:
 	static const FName BumperProfile;
 	bool bWasMovingForward = true;
 	float TimeTilJumpAttempt = 0.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Health")
+	bool bCanRespawn = false;
+	UPROPERTY(EditAnywhere, Category = "Health", meta = (EditCondition = "bCanRespawn"))
+	float RespawnDelay = 10.0f;
+	UPROPERTY(EditDefaultsOnly, Category = "Health")
+	TSubclassOf<ARespawnIndicator> RespawnIndicatorClass;
+	
+	UPROPERTY(ReplicatedUsing = OnRep_RespawnInfo)
+	FRespawnInfo RespawnInfo;
+	UFUNCTION()
+	void OnRep_RespawnInfo(const FRespawnInfo& PreviousInfo);
+	void StartRespawn();
+	FTimerHandle RespawnHandle;
+	UFUNCTION()
+	void OnRespawnTimer();
+	void CancelRespawn();
+	UPROPERTY()
+	ARespawnIndicator* RespawnIndicator;
 };

@@ -2,8 +2,11 @@
 #include "HealthComponent.h"
 #include "Hitbox.h"
 #include "PaperFlipbookComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PawnMovementComponent.h"
+#include "Net/UnrealNetwork.h"
+#include "UI/RespawnIndicator.h"
 
 const FName ANPCCharacter::BumperProfile = FName(TEXT("Bumper"));
 
@@ -77,12 +80,19 @@ void ANPCCharacter::BindToGameStartEnd()
 
 void ANPCCharacter::OnGameStart()
 {
+	CancelRespawn();
 	if (HasAuthority())
 	{
 		TeleportTo(CachedStartLocation, CachedStartRotation);
 		HealthComponent->ResetHealth();
 	}
 	EnableNPC();
+}
+
+void ANPCCharacter::OnGameEnd(const bool bGameWon)
+{
+	CancelRespawn();
+	DisableNPC();
 }
 
 void ANPCCharacter::Tick(float DeltaTime)
@@ -141,6 +151,13 @@ void ANPCCharacter::Tick(float DeltaTime)
 			GetCharacterMovement()->AddInputVector(FVector(bWasMovingForward ? 1.0f : -1.0f, 0.0f, 0.0f));
 		}
 	}
+}
+
+void ANPCCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(ANPCCharacter, RespawnInfo);
 }
 
 void ANPCCharacter::InstantKill_Implementation()
@@ -211,6 +228,7 @@ void ANPCCharacter::OnLifeStatusChanged(const bool bNewLifeStatus)
 {
 	if (bNewLifeStatus)
 	{
+		CancelRespawn();
 		EnableNPC();
 		GetSprite()->SetVisibility(true);
 	}
@@ -218,8 +236,93 @@ void ANPCCharacter::OnLifeStatusChanged(const bool bNewLifeStatus)
 	{
 		DisableNPC();
 		GetSprite()->SetVisibility(false);
+		if (HasAuthority() && bCanRespawn)
+		{
+			StartRespawn();
+		}
 	}
 }
 
+void ANPCCharacter::OnRep_RespawnInfo(const FRespawnInfo& PreviousInfo)
+{
+	if (!RespawnInfo.bRespawning)
+	{
+		CancelRespawn();
+		return;
+	}
+	//If there's already a respawn indicator active for this NPC, just reinitialize and move it.
+	if (IsValid(RespawnIndicator))
+	{
+		if (RespawnInfo.RespawnTime != PreviousInfo.RespawnTime)
+		{
+			RespawnIndicator->Init(this);
+		}
+		if (RespawnInfo.RespawnLocation != PreviousInfo.RespawnLocation)
+		{
+			RespawnIndicator->SetActorLocation(RespawnInfo.RespawnLocation);
+		}
+	}
+	//Otherwise, start a respawn, which will spawn the respawn indicator.
+	else
+	{
+		StartRespawn();
+	}
+}
 
+void ANPCCharacter::StartRespawn()
+{
+	CancelRespawn();
+	//On the server, start the actual respawn timer and set up info for clients to trigger their indicators.
+	if (HasAuthority())
+	{
+		//Any respawn delay below 0 will just instantly respawn the NPC.
+		if (RespawnDelay <= 0.0f)
+		{
+			OnRespawnTimer();
+			return;
+		}
+		else
+		{
+			GetWorldTimerManager().SetTimer(RespawnHandle, this, &ANPCCharacter::OnRespawnTimer, RespawnDelay);
+			//Set respawn info. This is replicated to clients so they can also spawn respawn indicators.
+			RespawnInfo.bRespawning = true;
+			RespawnInfo.RespawnTime = GameStateRef->GetServerWorldTimeSeconds() + RespawnDelay;
+			RespawnInfo.RespawnLocation = CachedStartLocation;
+		}
+	}
+	//For all clients (and the server), spawn an indicator for players to see where an enemy will respawn.
+	if (IsValid(RespawnIndicatorClass))
+	{
+		RespawnIndicator = GetWorld()->SpawnActor<ARespawnIndicator>(RespawnIndicatorClass, RespawnInfo.RespawnLocation, FRotator(0.0f, -90.0f, 0.0f));
+		if (IsValid(RespawnIndicator))
+		{
+			RespawnIndicator->SetActorLocationAndRotation(RespawnInfo.RespawnLocation, FRotator(0.0f, -90.0f, 0.0f));
+			RespawnIndicator->Init(this);
+		}
+	}
+}
 
+void ANPCCharacter::OnRespawnTimer()
+{
+	CancelRespawn();
+	TeleportTo(CachedStartLocation, CachedStartRotation);
+	HealthComponent->ResetHealth();
+}
+
+void ANPCCharacter::CancelRespawn()
+{
+	if (HasAuthority())
+	{
+		if (GetWorldTimerManager().IsTimerActive(RespawnHandle))
+		{
+			GetWorldTimerManager().ClearTimer(RespawnHandle);
+		}
+		RespawnInfo.bRespawning = false;
+	}
+	
+	if (IsValid(RespawnIndicator))
+	{
+		RespawnIndicator->Destroy();
+		RespawnIndicator = nullptr;
+	}
+}

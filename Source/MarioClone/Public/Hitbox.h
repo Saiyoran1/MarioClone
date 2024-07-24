@@ -1,7 +1,7 @@
 ﻿#pragma once
 #include "CoreMinimal.h"
 #include "CombatInterface.h"
-#include "Components/CapsuleComponent.h"
+#include "Components/SphereComponent.h"
 #include "Hitbox.generated.h"
 
 class UHitbox;
@@ -10,7 +10,7 @@ DECLARE_DYNAMIC_DELEGATE_ThreeParams(FHitboxCallback, UHitbox*, CollidingHitbox,
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FHitboxNotification, UHitbox*, CollidingHitbox, const FVector&, BounceImpulse, const float, DamageAmount);
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
-class MARIOCLONE_API UHitbox : public UCapsuleComponent
+class MARIOCLONE_API UHitbox : public USphereComponent
 {
 	GENERATED_BODY()
 
