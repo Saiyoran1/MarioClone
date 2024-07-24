@@ -5,6 +5,8 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PawnMovementComponent.h"
 
+const FName ANPCCharacter::BumperProfile = FName(TEXT("Bumper"));
+
 ANPCCharacter::ANPCCharacter()
 {
 	PrimaryActorTick.bCanEverTick = true;
@@ -98,7 +100,54 @@ void ANPCCharacter::Tick(float DeltaTime)
 
 	if (HasAuthority())
 	{
-		GetCharacterMovement()->AddInputVector(FVector(1.0f, 0.0f, 0.0f));
+		if (bShouldMove)
+		{
+			//Some enemies can randomly jump to make them more interesting.
+			if (bShouldRandomlyJump)
+			{
+				TimeTilJumpAttempt -= DeltaTime;
+				if (TimeTilJumpAttempt < 0.0f)
+				{
+					if (FMath::FRand() <= RandomJumpChance)
+					{
+						Jump();
+					}
+					TimeTilJumpAttempt = RandomJumpInterval + FMath::RandRange(-1.0f * RandomJumpIntervalVariance, RandomJumpIntervalVariance);
+				}
+			}
+			//Don't try to turn around in the air.
+			if (GetCharacterMovement()->IsMovingOnGround())
+			{
+				//Check if there are any walls in front of the actor.
+				FHitResult HorizontalHit;
+				const FVector TraceStart = GetCapsuleComponent()->GetComponentLocation() + FVector(GetCapsuleComponent()->GetScaledCapsuleRadius() * bWasMovingForward ? 1.0f : -1.0f, 0.0f, 0.0f);
+				const FVector TraceEnd = TraceStart + (FVector(bWasMovingForward ? 1.0f : -1.0f, 0.0f, 0.0f) * BumperDistanceHorizontal);
+				if (GetWorld()->LineTraceSingleByProfile(HorizontalHit, TraceStart, TraceEnd, BumperProfile))
+				{
+					bWasMovingForward = !bWasMovingForward;
+				}
+				//If no walls, check that there is valid floor in front of the actor.
+				else
+				{
+					FHitResult VerticalHit;
+					const FVector VertTraceStart = TraceEnd;
+					const FVector VertTraceEnd = VertTraceStart + (FVector::DownVector * BumperDistanceVertical);
+					if (!GetWorld()->LineTraceSingleByProfile(VerticalHit, VertTraceStart, VertTraceEnd, BumperProfile))
+					{
+						bWasMovingForward = !bWasMovingForward;
+					}
+				}
+			}
+			GetCharacterMovement()->AddInputVector(FVector(bWasMovingForward ? 1.0f : -1.0f, 0.0f, 0.0f));
+		}
+	}
+}
+
+void ANPCCharacter::InstantKill_Implementation()
+{
+	if (IsValid(HealthComponent))
+	{
+		HealthComponent->InstantKill();
 	}
 }
 

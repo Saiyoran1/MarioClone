@@ -48,7 +48,6 @@ void AMarioPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInp
 
 	PlayerInputComponent->BindAxis(FName("Movement"), this, &AMarioPlayerCharacter::MovementInput);
 	PlayerInputComponent->BindAction(FName("Jump"), IE_Pressed, this, &AMarioPlayerCharacter::JumpPressed);
-	PlayerInputComponent->BindAction(FName("Jump"), IE_Released, this, &AMarioPlayerCharacter::JumpReleased);
 
 #if WITH_EDITOR
 	//Debug keybindings for testing
@@ -365,11 +364,6 @@ void AMarioPlayerCharacter::JumpPressed()
 	Jump();
 }
 
-void AMarioPlayerCharacter::JumpReleased()
-{
-	//TODO: Float/mana/drop attack.
-}
-
 #pragma endregion 
 #pragma region Health
 
@@ -476,6 +470,18 @@ void AMarioPlayerCharacter::Respawn()
 {
 	TeleportTo(CachedSpawnLocation, CachedSpawnRotation);
 	HealthComponent->ResetHealth();
+}
+
+void AMarioPlayerCharacter::InstantKill_Implementation()
+{
+	if (bImmune)
+	{
+		EndImmunity();
+	}
+	if (IsValid(HealthComponent))
+	{
+		HealthComponent->InstantKill();
+	}
 }
 
 void AMarioPlayerCharacter::OnRep_CurrentLives()

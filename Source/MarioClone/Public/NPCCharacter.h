@@ -18,7 +18,8 @@ public:
 	virtual void Tick(float DeltaTime) override;
 
 	virtual EHostility GetHostility_Implementation() const override { return Hostility; }
-	virtual UHealthComponent* GetHealthComponent_Implementation() const override { return HealthComponent; } 
+	virtual UHealthComponent* GetHealthComponent_Implementation() const override { return HealthComponent; }
+	virtual void InstantKill_Implementation() override;
 
 private:
 
@@ -55,4 +56,23 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "Hostility")
 	EHostility Hostility = EHostility::Enemy;
+
+	UPROPERTY(EditAnywhere, Category = "Movement")
+	bool bShouldMove = true;
+	UPROPERTY(EditAnywhere, Category = "Movement")
+	float BumperDistanceHorizontal = 50.0f;
+	UPROPERTY(EditAnywhere, Category = "Movement")
+	float BumperDistanceVertical = 100.0f;
+	UPROPERTY(EditAnywhere, Category = "Movement", meta = (EditCondition = "bShouldMove"))
+	bool bShouldRandomlyJump = true;
+	UPROPERTY(EditAnywhere, Category = "Movement", meta = (EditCondition = "bShouldMove && bShouldRandomlyJump"))
+	float RandomJumpInterval = 1.0f;
+	UPROPERTY(EditAnywhere, Category = "Movement", meta = (EditCondition = "bShouldMove && bShouldRandomlyJump"))
+	float RandomJumpIntervalVariance = 0.1f;
+	UPROPERTY(EditAnywhere, Category = "Movement", meta = (EditCondition = "bShouldMove && bShouldRandomlyJump"))
+	float RandomJumpChance = 0.3f;
+
+	static const FName BumperProfile;
+	bool bWasMovingForward = true;
+	float TimeTilJumpAttempt = 0.0f;
 };

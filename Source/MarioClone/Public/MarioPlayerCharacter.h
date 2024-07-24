@@ -121,8 +121,6 @@ private:
 	void MovementInput(const float AxisValue);
 	UFUNCTION()
 	void JumpPressed();
-	UFUNCTION()
-	void JumpReleased();
 
 #pragma endregion
 #pragma region Health
@@ -130,6 +128,7 @@ private:
 public:
 
 	virtual UHealthComponent* GetHealthComponent_Implementation() const override { return HealthComponent; }
+	virtual void InstantKill_Implementation() override;
 	
 	int32 GetMaxLives() const { return MaxLives; }
 	int32 GetCurrentLives() const { return CurrentLives; }
@@ -169,7 +168,7 @@ private:
 	FLivesNotification OnLivesChanged;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Health")
-	float PostHitImmunityWindow = 1.5f;
+	float PostHitImmunityWindow = 1.0f;
 	UPROPERTY(EditDefaultsOnly, Category = "Health")
 	UMaterialInstance* SpriteFlashMaterial = nullptr;
 

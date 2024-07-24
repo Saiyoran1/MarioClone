@@ -33,4 +33,7 @@ public:
 	UFUNCTION(BlueprintNativeEvent)
 	EHostility GetHostility() const;
 	virtual EHostility GetHostility_Implementation() const { return EHostility::Enemy; }
+
+	UFUNCTION(BlueprintNativeEvent)
+	void InstantKill();
 };
