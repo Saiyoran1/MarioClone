@@ -10,6 +10,8 @@
 
 const FName ANPCCharacter::BumperProfile = FName(TEXT("Bumper"));
 
+#pragma region Core
+
 ANPCCharacter::ANPCCharacter()
 {
 	PrimaryActorTick.bCanEverTick = true;
@@ -23,6 +25,13 @@ ANPCCharacter::ANPCCharacter()
 	
 	HealthComponent = CreateDefaultSubobject<UHealthComponent>(FName(TEXT("Health")));
 	HealthComponent->SetupAttachment(RootComponent);
+}
+
+void ANPCCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(ANPCCharacter, RespawnInfo);
 }
 
 void ANPCCharacter::BeginPlay()
@@ -53,6 +62,66 @@ void ANPCCharacter::BeginPlay()
 	else
 	{
 		GameStateDelegateHandle = GetWorld()->GameStateSetEvent.AddUObject(this, &ANPCCharacter::OnGameStateSet);
+	}
+}
+
+void ANPCCharacter::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+
+	if (!bIsEnabled)
+	{
+		return;
+	}
+	if (IsValid(HealthComponent) && !HealthComponent->IsAlive())
+	{
+		return;
+	}
+
+	if (HasAuthority())
+	{
+		if (bShouldMove)
+		{
+			//Some enemies can randomly jump to make them more interesting.
+			if (bShouldRandomlyJump)
+			{
+				TimeTilJumpAttempt -= DeltaTime;
+				if (TimeTilJumpAttempt < 0.0f)
+				{
+					//Roll a random number against our jump chance.
+					if (FMath::FRand() <= RandomJumpChance)
+					{
+						Jump();
+					}
+					TimeTilJumpAttempt = RandomJumpInterval + FMath::RandRange(-1.0f * RandomJumpIntervalVariance, RandomJumpIntervalVariance);
+				}
+			}
+			//If the NPC is on the ground, check for walls and valid floor in front of them.
+			//If the NPC is in the air, we just continue moving in whatever direction we were in last.
+			if (GetCharacterMovement()->IsMovingOnGround())
+			{
+				//Check if there are any walls in front of the actor.
+				FHitResult HorizontalHit;
+				const FVector TraceStart = GetCapsuleComponent()->GetComponentLocation() + FVector(GetCapsuleComponent()->GetScaledCapsuleRadius() * bWasMovingForward ? 1.0f : -1.0f, 0.0f, 0.0f);
+				const FVector TraceEnd = TraceStart + (FVector(bWasMovingForward ? 1.0f : -1.0f, 0.0f, 0.0f) * BumperDistanceHorizontal);
+				if (GetWorld()->LineTraceSingleByProfile(HorizontalHit, TraceStart, TraceEnd, BumperProfile))
+				{
+					bWasMovingForward = !bWasMovingForward;
+				}
+				//If no walls, check that there is valid floor in front of the actor.
+				else
+				{
+					FHitResult VerticalHit;
+					const FVector VertTraceStart = TraceEnd;
+					const FVector VertTraceEnd = VertTraceStart + (FVector::DownVector * BumperDistanceVertical);
+					if (!GetWorld()->LineTraceSingleByProfile(VerticalHit, VertTraceStart, VertTraceEnd, BumperProfile))
+					{
+						bWasMovingForward = !bWasMovingForward;
+					}
+				}
+			}
+			GetCharacterMovement()->AddInputVector(FVector(bWasMovingForward ? 1.0f : -1.0f, 0.0f, 0.0f));
+		}
 	}
 }
 
@@ -93,79 +162,6 @@ void ANPCCharacter::OnGameEnd(const bool bGameWon)
 {
 	CancelRespawn();
 	DisableNPC();
-}
-
-void ANPCCharacter::Tick(float DeltaTime)
-{
-	Super::Tick(DeltaTime);
-
-	if (!bIsEnabled)
-	{
-		return;
-	}
-	if (IsValid(HealthComponent) && !HealthComponent->IsAlive())
-	{
-		return;
-	}
-
-	if (HasAuthority())
-	{
-		if (bShouldMove)
-		{
-			//Some enemies can randomly jump to make them more interesting.
-			if (bShouldRandomlyJump)
-			{
-				TimeTilJumpAttempt -= DeltaTime;
-				if (TimeTilJumpAttempt < 0.0f)
-				{
-					if (FMath::FRand() <= RandomJumpChance)
-					{
-						Jump();
-					}
-					TimeTilJumpAttempt = RandomJumpInterval + FMath::RandRange(-1.0f * RandomJumpIntervalVariance, RandomJumpIntervalVariance);
-				}
-			}
-			//Don't try to turn around in the air.
-			if (GetCharacterMovement()->IsMovingOnGround())
-			{
-				//Check if there are any walls in front of the actor.
-				FHitResult HorizontalHit;
-				const FVector TraceStart = GetCapsuleComponent()->GetComponentLocation() + FVector(GetCapsuleComponent()->GetScaledCapsuleRadius() * bWasMovingForward ? 1.0f : -1.0f, 0.0f, 0.0f);
-				const FVector TraceEnd = TraceStart + (FVector(bWasMovingForward ? 1.0f : -1.0f, 0.0f, 0.0f) * BumperDistanceHorizontal);
-				if (GetWorld()->LineTraceSingleByProfile(HorizontalHit, TraceStart, TraceEnd, BumperProfile))
-				{
-					bWasMovingForward = !bWasMovingForward;
-				}
-				//If no walls, check that there is valid floor in front of the actor.
-				else
-				{
-					FHitResult VerticalHit;
-					const FVector VertTraceStart = TraceEnd;
-					const FVector VertTraceEnd = VertTraceStart + (FVector::DownVector * BumperDistanceVertical);
-					if (!GetWorld()->LineTraceSingleByProfile(VerticalHit, VertTraceStart, VertTraceEnd, BumperProfile))
-					{
-						bWasMovingForward = !bWasMovingForward;
-					}
-				}
-			}
-			GetCharacterMovement()->AddInputVector(FVector(bWasMovingForward ? 1.0f : -1.0f, 0.0f, 0.0f));
-		}
-	}
-}
-
-void ANPCCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
-{
-	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-
-	DOREPLIFETIME(ANPCCharacter, RespawnInfo);
-}
-
-void ANPCCharacter::InstantKill_Implementation()
-{
-	if (IsValid(HealthComponent))
-	{
-		HealthComponent->InstantKill();
-	}
 }
 
 void ANPCCharacter::EnableNPC()
@@ -209,18 +205,15 @@ void ANPCCharacter::DisableNPC()
 	bIsEnabled = false;
 }
 
-void ANPCCharacter::OnHitboxCollision(UHitbox* CollidingHitbox, const FVector& BounceImpulse, const float DamageValue)
+
+#pragma endregion 
+#pragma region Health
+
+void ANPCCharacter::InstantKill_Implementation()
 {
-	if (HasAuthority())
+	if (IsValid(HealthComponent))
 	{
-		if (!BounceImpulse.IsNearlyZero())
-		{
-			LaunchCharacter(BounceImpulse, false, true);
-		}
-		if (DamageValue != 0.0f)
-		{
-			HealthComponent->ModifyHealth(DamageValue * -1.0f);
-		}
+		HealthComponent->InstantKill();
 	}
 }
 
@@ -243,29 +236,18 @@ void ANPCCharacter::OnLifeStatusChanged(const bool bNewLifeStatus)
 	}
 }
 
-void ANPCCharacter::OnRep_RespawnInfo(const FRespawnInfo& PreviousInfo)
+void ANPCCharacter::OnHitboxCollision(UHitbox* CollidingHitbox, const FVector& BounceImpulse, const float DamageValue)
 {
-	if (!RespawnInfo.bRespawning)
+	if (HasAuthority())
 	{
-		CancelRespawn();
-		return;
-	}
-	//If there's already a respawn indicator active for this NPC, just reinitialize and move it.
-	if (IsValid(RespawnIndicator))
-	{
-		if (RespawnInfo.RespawnTime != PreviousInfo.RespawnTime)
+		if (!BounceImpulse.IsNearlyZero())
 		{
-			RespawnIndicator->Init(this);
+			LaunchCharacter(BounceImpulse, false, true);
 		}
-		if (RespawnInfo.RespawnLocation != PreviousInfo.RespawnLocation)
+		if (DamageValue != 0.0f)
 		{
-			RespawnIndicator->SetActorLocation(RespawnInfo.RespawnLocation);
+			HealthComponent->ModifyHealth(DamageValue * -1.0f);
 		}
-	}
-	//Otherwise, start a respawn, which will spawn the respawn indicator.
-	else
-	{
-		StartRespawn();
 	}
 }
 
@@ -326,3 +308,31 @@ void ANPCCharacter::CancelRespawn()
 		RespawnIndicator = nullptr;
 	}
 }
+
+void ANPCCharacter::OnRep_RespawnInfo(const FRespawnInfo& PreviousInfo)
+{
+	if (!RespawnInfo.bRespawning)
+	{
+		CancelRespawn();
+		return;
+	}
+	//If there's already a respawn indicator active for this NPC, just reinitialize and move it.
+	if (IsValid(RespawnIndicator))
+	{
+		if (RespawnInfo.RespawnTime != PreviousInfo.RespawnTime)
+		{
+			RespawnIndicator->Init(this);
+		}
+		if (RespawnInfo.RespawnLocation != PreviousInfo.RespawnLocation)
+		{
+			RespawnIndicator->SetActorLocation(RespawnInfo.RespawnLocation);
+		}
+	}
+	//Otherwise, start a respawn, which will spawn the respawn indicator.
+	else
+	{
+		StartRespawn();
+	}
+}
+
+#pragma endregion 

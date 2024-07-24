@@ -90,10 +90,15 @@ public:
 	virtual void BeginPlay() override;
 	virtual void MoveAutonomous(float ClientTimeStamp, float DeltaTime, uint8 CompressedFlags, const FVector& NewAccel) override;
 	virtual void UpdateCharacterStateBeforeMovement(float DeltaSeconds) override;
+	virtual float GetGravityZ() const override;
 	
 	void TriggerBounce(const int32 ThisHitboxID, const int32 OtherHitboxID);
 
 private:
+
+	//Multiplier on gravity when velocity is downward, to make jumping and falling faster.
+	UPROPERTY(EditDefaultsOnly, Category = "Custom Movement")
+	float DownwardGravityMultiplier = 2.0f;
 
 	UPROPERTY()
 	UHitboxManager* HitboxManager = nullptr;

@@ -165,6 +165,15 @@ void UMarioMovementComponent::UpdateCharacterStateBeforeMovement(float DeltaSeco
 	}
 }
 
+float UMarioMovementComponent::GetGravityZ() const
+{
+	if (Velocity.Z > 0.0f)
+	{
+		return Super::GetGravityZ();
+	}
+	return Super::GetGravityZ() * DownwardGravityMultiplier;
+}
+
 void UMarioMovementComponent::TriggerBounce(const int32 ThisHitboxID, const int32 OtherHitboxID)
 {
 	if (!GetPawnOwner()->IsLocallyControlled())
