@@ -189,25 +189,6 @@ private:
 	UPROPERTY()
 	UMaterialInterface* CachedSpriteMaterial = nullptr;
 	
-#if WITH_EDITOR
-	UFUNCTION()
-	void DEBUG_DamageSelf();
-	UFUNCTION(Server, Reliable)
-	void Server_DEBUG_DamageSelf();
-	UFUNCTION()
-	void DEBUG_HealSelf();
-	UFUNCTION(Server, Reliable)
-	void Server_DEBUG_HealSelf();
-	UFUNCTION()
-	void DEBUG_KillSelf();
-	UFUNCTION(Server, Reliable)
-	void Server_DEBUG_KillSelf();
-	UFUNCTION()
-	void DEBUG_ReviveSelf();
-	UFUNCTION(Server, Reliable)
-	void Server_DEBUG_ReviveSelf();
-#endif
-	
 #pragma endregion
 #pragma region Collision
 

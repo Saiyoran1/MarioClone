@@ -16,19 +16,31 @@ AMarioPlayerCharacter::AMarioPlayerCharacter(const FObjectInitializer& ObjectIni
 	PrimaryActorTick.bCanEverTick = true;
 
 	Camera = CreateDefaultSubobject<UCameraComponent>(FName(TEXT("Camera")));
-	Camera->SetupAttachment(RootComponent);
-	Camera->SetUsingAbsoluteRotation(true);
-	Camera->SetWorldRotation(FRotator(0.0f, -90.0f, 0.0f));
-	Camera->SetRelativeLocation(FVector(0.0f, 800.0f, 100.0f));
-
-	GetSprite()->SetUsingAbsoluteRotation(true);
-	GetSprite()->SetWorldRotation(FRotator(0.0f));
-
+	if (IsValid(Camera))
+	{
+		Camera->SetupAttachment(RootComponent);
+		Camera->SetUsingAbsoluteRotation(true);
+		Camera->SetWorldRotation(FRotator(0.0f, -90.0f, 0.0f));
+		Camera->SetRelativeLocation(FVector(0.0f, 800.0f, 100.0f));
+	}
+	
+	if (IsValid(GetSprite()))
+	{
+		GetSprite()->SetUsingAbsoluteRotation(true);
+		GetSprite()->SetWorldRotation(FRotator(0.0f));
+	}
+	
 	PlayerHitbox = CreateDefaultSubobject<UHitbox>(FName(TEXT("Hitbox")));
-	PlayerHitbox->SetupAttachment(RootComponent);
+	if (IsValid(PlayerHitbox))
+	{
+		PlayerHitbox->SetupAttachment(RootComponent);
+	}
 
 	HealthComponent = CreateDefaultSubobject<UHealthComponent>(FName(TEXT("Health")));
-	HealthComponent->SetupAttachment(RootComponent);
+	if (IsValid(HealthComponent))
+	{
+		HealthComponent->SetupAttachment(RootComponent);
+	}
 
 	MarioMoveComponent = Cast<UMarioMovementComponent>(GetCharacterMovement());
 }
@@ -48,20 +60,12 @@ void AMarioPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInp
 
 	PlayerInputComponent->BindAxis(FName("Movement"), this, &AMarioPlayerCharacter::MovementInput);
 	PlayerInputComponent->BindAction(FName("Jump"), IE_Pressed, this, &AMarioPlayerCharacter::JumpPressed);
-
-#if WITH_EDITOR
-	//Debug keybindings for testing
-	PlayerInputComponent->BindAction(FName("DEBUG_DamageSelf"), IE_Pressed, this, &AMarioPlayerCharacter::DEBUG_DamageSelf);
-	PlayerInputComponent->BindAction(FName("DEBUG_HealSelf"), IE_Pressed, this, &AMarioPlayerCharacter::DEBUG_HealSelf);
-	PlayerInputComponent->BindAction(FName("DEBUG_KillSelf"), IE_Pressed, this, &AMarioPlayerCharacter::DEBUG_KillSelf);
-	PlayerInputComponent->BindAction(FName("DEBUG_ReviveSelf"), IE_Pressed, this, &AMarioPlayerCharacter::DEBUG_ReviveSelf);
-#endif
 }
 
 void AMarioPlayerCharacter::NotifyControllerChanged()
 {
 	Super::NotifyControllerChanged();
-	if (Controller.Get() && Controller->IsLocalPlayerController())
+	if (IsValid(Controller.Get()) && Controller->IsLocalPlayerController())
 	{
 		PlayerController = Cast<APlayerController>(Controller.Get());
 		GameStateRef = Cast<AMarioGameState>(GetWorld()->GetGameState());
@@ -107,17 +111,26 @@ void AMarioPlayerCharacter::BeginPlay()
 	CachedSpriteMaterial = IsValid(GetSprite()) ? GetSprite()->GetMaterial(0) : nullptr;
 	
 	//Constrain movement to the X and Z axes, since this is a 2D game.
-	GetMovementComponent()->SetPlaneConstraintEnabled(true);
-	GetMovementComponent()->SetPlaneConstraintAxisSetting(EPlaneConstraintAxisSetting::Y);
+	if (IsValid(GetMovementComponent()))
+	{
+		GetMovementComponent()->SetPlaneConstraintEnabled(true);
+		GetMovementComponent()->SetPlaneConstraintAxisSetting(EPlaneConstraintAxisSetting::Y);
+	}
 
 	//Bind to the health and life status delegates of the health component.
-	HealthCallback.BindDynamic(this, &AMarioPlayerCharacter::OnHealthChanged);
-	LifeCallback.BindDynamic(this, &AMarioPlayerCharacter::OnLifeStatusChanged);
-	HealthComponent->SubscribeToHealthChanged(HealthCallback);
-	HealthComponent->SubscribeToLifeStatusChanged(LifeCallback);
+	if (IsValid(HealthComponent))
+	{
+		HealthCallback.BindDynamic(this, &AMarioPlayerCharacter::OnHealthChanged);
+		LifeCallback.BindDynamic(this, &AMarioPlayerCharacter::OnLifeStatusChanged);
+		HealthComponent->SubscribeToHealthChanged(HealthCallback);
+		HealthComponent->SubscribeToLifeStatusChanged(LifeCallback);
+	}
 
-	HitboxCallback.BindDynamic(this, &AMarioPlayerCharacter::OnHitboxCollision);
-	PlayerHitbox->SubscribeToHitboxCollision(HitboxCallback);
+	if (IsValid(PlayerHitbox))
+	{
+		HitboxCallback.BindDynamic(this, &AMarioPlayerCharacter::OnHitboxCollision);
+		PlayerHitbox->SubscribeToHitboxCollision(HitboxCallback);
+	}
 
 	//Subscribe to the GameState's GameStart and GameEnd delegates.
 	if (HasAuthority() || IsLocallyControlled())
@@ -152,15 +165,22 @@ void AMarioPlayerCharacter::Tick(float DeltaSeconds)
 	}
 
 	//Update our sprite flash material visual while immune.
-	if (bImmune && IsValid(DynamicSpriteFlashMaterial))
+	if (bImmune)
 	{
 		TimeSinceImmunityStart += DeltaSeconds;
-		const float Frequency = NumSpriteFlashCycles / PostHitImmunityWindow;
-		//Shamelessly stolen sine function from stackoverflow to make opacity pulse.
-		const float Opacity = 0.5f * (1 + FMath::Sin(2 * PI * Frequency * TimeSinceImmunityStart));
-		DynamicSpriteFlashMaterial->SetScalarParameterValue(FName("Opacity"), Opacity);
+		if (IsValid(DynamicSpriteFlashMaterial))
+		{
+			const float Frequency = NumSpriteFlashCycles / PostHitImmunityWindow;
+			//Shamelessly stolen sine function from stackoverflow to make opacity pulse.
+			const float Opacity = 0.5f * (1 + FMath::Sin(2 * PI * Frequency * TimeSinceImmunityStart));
+			DynamicSpriteFlashMaterial->SetScalarParameterValue(FName("Opacity"), Opacity);
+		}
 	}
 
+	if (!IsValid(GetSprite()))
+	{
+		return;
+	}
 	//Determine which sprite flipbook to use based on whether we are jumping, running, or standing still.
 	UPaperFlipbook* Flipbook = nullptr;
 	FVector Velocity = FVector::ZeroVector;
@@ -244,7 +264,7 @@ void AMarioPlayerCharacter::EnablePlayer()
 	{
 		PlayerHitbox->EnableHitbox();
 	}
-	bImmune = false;
+	EndImmunity();
 
 	bIsEnabled = true;
 }
@@ -282,11 +302,7 @@ void AMarioPlayerCharacter::DisablePlayer()
 		PlayerHitbox->DisableHitbox();
 	}
 	//If we were immune, clear the immunity timer.
-	bImmune = false;
-	if (GetWorldTimerManager().IsTimerActive(ImmunityHandle))
-	{
-		GetWorldTimerManager().ClearTimer(ImmunityHandle);
-	}
+	EndImmunity();
 
 	bIsEnabled = false;
 }
@@ -361,7 +377,10 @@ void AMarioPlayerCharacter::Server_RequestRestart_Implementation()
 
 void AMarioPlayerCharacter::MovementInput(const float AxisValue)
 {
-	GetMovementComponent()->AddInputVector(FVector(1.0f, 0.0f, 0.0f) * AxisValue);
+	if (IsValid(GetMovementComponent()))
+	{
+		GetMovementComponent()->AddInputVector(FVector(1.0f, 0.0f, 0.0f) * AxisValue);
+	}
 }
 
 void AMarioPlayerCharacter::JumpPressed()
@@ -547,49 +566,3 @@ void AMarioPlayerCharacter::UnsubscribeFromScoreChanged(const FScoreCallback& Ca
 }
 
 #pragma endregion 
-
-#if WITH_EDITOR
-#pragma region Debug
-
-void AMarioPlayerCharacter::DEBUG_DamageSelf()
-{
-	Server_DEBUG_DamageSelf();
-}
-
-void AMarioPlayerCharacter::Server_DEBUG_DamageSelf_Implementation()
-{
-	HealthComponent->ModifyHealth(-5.0f);
-}
-
-void AMarioPlayerCharacter::DEBUG_HealSelf()
-{
-	Server_DEBUG_HealSelf();
-}
-
-void AMarioPlayerCharacter::Server_DEBUG_HealSelf_Implementation()
-{
-	HealthComponent->ModifyHealth(3.5f);
-}
-
-void AMarioPlayerCharacter::DEBUG_KillSelf()
-{
-	Server_DEBUG_KillSelf();
-}
-
-void AMarioPlayerCharacter::Server_DEBUG_KillSelf_Implementation()
-{
-	HealthComponent->InstantKill();
-}
-
-void AMarioPlayerCharacter::DEBUG_ReviveSelf()
-{
-	Server_DEBUG_ReviveSelf();
-}
-
-void AMarioPlayerCharacter::Server_DEBUG_ReviveSelf_Implementation()
-{
-	HealthComponent->ResetHealth();
-}
-
-#pragma endregion
-#endif

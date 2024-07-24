@@ -67,7 +67,7 @@ private:
 
 	static const FName HitboxProfile;
 	
-	UPROPERTY(EditAnywhere, Category = "Hitbox", meta = (EditCondition = "bUseCollisionThreshold"))
+	UPROPERTY(EditAnywhere, Category = "Hitbox")
 	float CollisionThreshold = 0.75;
 
 	//Callback from native component OnBeginOverlap for this hitbox.
