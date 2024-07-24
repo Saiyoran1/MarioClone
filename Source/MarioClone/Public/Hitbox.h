@@ -6,8 +6,8 @@
 
 class UHitbox;
 
-DECLARE_DYNAMIC_DELEGATE_ThreeParams(FHitboxCallback, UHitbox*, CollidingHitbox, const FVector&, BounceImpulse, const float, DamageAmount);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FHitboxNotification, UHitbox*, CollidingHitbox, const FVector&, BounceImpulse, const float, DamageAmount);
+DECLARE_DYNAMIC_DELEGATE_FiveParams(FHitboxCallback, UHitbox*, CollidingHitbox, const FVector&, BounceToThis, const float, DamageToThis, const FVector&, BounceToOther, const float, DamageToOther);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_FiveParams(FHitboxNotification, UHitbox*, CollidingHitbox, const FVector&, BounceToThis, const float, DamageToThis, const FVector&, BounceToOther, const float, DamageToOther);
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class MARIOCLONE_API UHitbox : public USphereComponent
@@ -25,6 +25,7 @@ public:
 
 	EHostility GetHostility() const { return OwnerHostility; }
 	int32 GetHitboxID() const { return HitboxID; }
+	bool IsOwnerLocallyControlled() const;
 
 private:
 	
@@ -46,18 +47,18 @@ public:
 	void EnableHitbox();
 	void DisableHitbox();
 	
-	float GetCollisionThreshold(bool& bOutUseThreshold) const;
+	float GetCollisionThreshold() const;
 	
 	bool IsBouncy() const { return bIsBouncy; }
-	bool CanBeBounced() const;
+	bool CanBeBounced() const { return bCanBeBounced; }
 	FVector GetBounceImpulse() const { return BounceImpulse; }
 	
 	bool DealsCollisionDamage() const { return bDealsCollisionDamage; }
-	bool CanBeCollisionDamaged() const;
+	bool CanBeCollisionDamaged() const { return bCanBeCollisionDamaged; }
 	float GetCollisionDamageDone() const { return CollisionDamage; }
 
 	//Called from another hitbox that handled a collision with this hitbox.
-	void NotifyOfCollisionResult(UHitbox* CollidingHitbox, const FVector& Bounce, const float Damage);
+	void NotifyOfCollisionResult(UHitbox* CollidingHitbox, const FVector& BounceToThis, const float DamageToThis, const FVector& BounceToOther, const float DamageToOther);
 
 	void SubscribeToHitboxCollision(const FHitboxCallback& Callback);
 	void UnsubscribeFromHitboxCollision(const FHitboxCallback& Callback);
@@ -65,9 +66,7 @@ public:
 private:
 
 	static const FName HitboxProfile;
-
-	UPROPERTY(EditAnywhere, Category = "Hitbox")
-	bool bUseCollisionThreshold = true;
+	
 	UPROPERTY(EditAnywhere, Category = "Hitbox", meta = (EditCondition = "bUseCollisionThreshold"))
 	float CollisionThreshold = 0.75;
 

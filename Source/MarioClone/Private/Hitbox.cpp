@@ -1,5 +1,6 @@
 ﻿#include "Hitbox.h"
 #include "HitboxManager.h"
+#include "MarioPlayerCharacter.h"
 #include "Net/UnrealNetwork.h"
 
 const FName UHitbox::HitboxProfile = FName(TEXT("Hitbox"));
@@ -80,10 +81,13 @@ void UHitbox::DisableHitbox()
 	SetCollisionEnabled(ECollisionEnabled::NoCollision);
 }
 
-float UHitbox::GetCollisionThreshold(bool& bOutUseThreshold) const
+bool UHitbox::IsOwnerLocallyControlled() const
 {
-	bOutUseThreshold = bUseCollisionThreshold;
-	return FMath::Lerp(Bounds.Origin.Z - Bounds.BoxExtent.Z, Bounds.Origin.Z + Bounds.BoxExtent.Z, CollisionThreshold);
+	if (IsValid(OwnerAsPawn))
+	{
+		return OwnerAsPawn->IsLocallyControlled();
+	}
+	return GetOwnerRole() == ROLE_Authority;
 }
 
 #pragma endregion
@@ -96,13 +100,19 @@ void UHitbox::OnOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherA
 	//This is already partially handled by the hitbox profiles themselves (which only overlap other hitboxes),
 	//but its possible to set something else in the world to use one of those profiles or object channels by mistake.
 	//In that case, we just ignore the event here, because we have to cast to UHitbox anyway to get bounce and damage info.
-	UHitbox* CollidingHitbox = Cast<UHitbox>(OtherComp);
+ 	UHitbox* CollidingHitbox = Cast<UHitbox>(OtherComp);
 	if (!IsValid(CollidingHitbox))
 	{
 		return;
 	}
+	if (Cast<AMarioPlayerCharacter>(GetOwner()))
+	{
+		volatile int a = 0;
+	}
 	//When two hitboxes collide, only one of them actually processes the collision.
 	//The other will be notified by the one that does the processing.
+	//We also make sure that collisions involving predicting clients only happen on the predicting client machine.
+	//This assumes that we don't have collisions between two predicting clients (which we currently don't).
 	if (!ShouldProcessCollision(CollidingHitbox))
 	{
 		return;
@@ -114,29 +124,47 @@ void UHitbox::OnOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherA
 	float DamageToOther = 0.0f;
 	ProcessCollision(CollidingHitbox, ImpulseToThis, ImpulseToOther, DamageToThis, DamageToOther);
 	//Broadcast the collision result, and tell the other hitbox to broadcast it as well.
-	OnHitboxCollision.Broadcast(CollidingHitbox, ImpulseToThis, DamageToThis);
-	CollidingHitbox->NotifyOfCollisionResult(this, ImpulseToOther, DamageToOther);
+	OnHitboxCollision.Broadcast(CollidingHitbox, ImpulseToThis, DamageToThis, ImpulseToOther, DamageToOther);
+	CollidingHitbox->NotifyOfCollisionResult(this, ImpulseToOther, DamageToOther, ImpulseToThis, DamageToThis);
 }
 
 bool UHitbox::ShouldProcessCollision(UHitbox* OtherHitbox) const
 {
 	//If two hitboxes are the same hostility, we won't process their collision.
-	if (OtherHitbox->GetHostility() == OwnerHostility)
+	//The hitbox whose hostility value is higher will be the one to process the collision.
+	if (OtherHitbox->GetHostility() >= OwnerHostility)
 	{
 		return false;
 	}
-	//Otherwise, friendly > enemy > neutral for priority on who calculates collisions.
-	return OtherHitbox->GetHostility() < OwnerHostility;
+	//If we're on the server, we want to process the collision as long as neither hitbox is controlled on a remote client.
+	if (GetOwnerRole() == ROLE_Authority)
+	{
+		//Note: We cannot check RemoteRole == AutoProxy because for some reason this is TRUE for listen servers.
+		if (!IsOwnerLocallyControlled())
+		{
+			return false;
+		}
+		if (!OtherHitbox->IsOwnerLocallyControlled())
+		{
+			return false;
+		}
+		return true;
+	}
+	//Locally controlled client can process the collision.
+	else if (GetOwnerRole() == ROLE_AutonomousProxy)
+	{
+		return true;
+	}
+	return false;
 }
 
 void UHitbox::ProcessCollision(UHitbox* OtherHitbox, FVector& ImpulseToThis, FVector& ImpulseToOther, float& DamageToThis, float& DamageToOther) const
 {
 	//Check if this hitbox is above the threshold to deal damage and receive a bounce from the other hitbox.
 	const float ThisHitboxMinZ = Bounds.Origin.Z - Bounds.BoxExtent.Z;
-	bool bUseOtherHitboxThreshold = true;
-	const float OtherHitboxThreshold = OtherHitbox->GetCollisionThreshold(bUseOtherHitboxThreshold);
+	const float OtherHitboxThreshold = OtherHitbox->GetCollisionThreshold();
 
-	if (!bUseOtherHitboxThreshold || ThisHitboxMinZ > OtherHitboxThreshold)
+	if (ThisHitboxMinZ > OtherHitboxThreshold)
 	{
 		if (DealsCollisionDamage() && OtherHitbox->CanBeCollisionDamaged())
 		{
@@ -161,19 +189,15 @@ void UHitbox::ProcessCollision(UHitbox* OtherHitbox, FVector& ImpulseToThis, FVe
 	}
 }
 
-bool UHitbox::CanBeCollisionDamaged() const
+void UHitbox::NotifyOfCollisionResult(UHitbox* CollidingHitbox, const FVector& BounceToThis, const float DamageToThis,
+	const FVector& BounceToOther, const float DamageToOther)
 {
-	return GetOwnerRole() == ROLE_Authority && bCanBeCollisionDamaged;
+	OnHitboxCollision.Broadcast(CollidingHitbox, BounceToThis, DamageToThis, BounceToOther, DamageToOther);
 }
 
-bool UHitbox::CanBeBounced() const
+float UHitbox::GetCollisionThreshold() const
 {
-	return bCanBeBounced && (IsValid(OwnerAsPawn) ? OwnerAsPawn->IsLocallyControlled() : GetOwnerRole() == ROLE_Authority);
-}
-
-void UHitbox::NotifyOfCollisionResult(UHitbox* CollidingHitbox, const FVector& Bounce, const float Damage)
-{
-	OnHitboxCollision.Broadcast(CollidingHitbox, Bounce, Damage);
+	return FMath::Lerp(GetComponentLocation().Z - GetScaledSphereRadius(), GetComponentLocation().Z + GetScaledSphereRadius(), CollisionThreshold);
 }
 
 void UHitbox::SubscribeToHitboxCollision(const FHitboxCallback& Callback)

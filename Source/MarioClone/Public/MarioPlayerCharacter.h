@@ -15,6 +15,8 @@ class UCameraComponent;
 
 DECLARE_DYNAMIC_DELEGATE_OneParam(FLivesCallback, const int32, NewLives);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FLivesNotification, const int32, NewLives);
+DECLARE_DYNAMIC_DELEGATE_OneParam(FScoreCallback, const int32, NewScore);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FScoreNotification, const int32, NewScore);
 
 UCLASS()
 class MARIOCLONE_API AMarioPlayerCharacter : public APaperCharacter, public ICombatInterface
@@ -219,7 +221,27 @@ private:
 	UHitbox* PlayerHitbox;
 	FHitboxCallback HitboxCallback;
 	UFUNCTION()
-	void OnHitboxCollision(UHitbox* CollidingHitbox, const FVector& BounceImpulse, const float DamageValue);
+	void OnHitboxCollision(UHitbox* CollidingHitbox, const FVector& BounceToThis, const float DamageToThis, const FVector& BounceToOther, const float DamageToOther);
+
+#pragma endregion
+#pragma region Collectibles
+
+public:
+
+	int32 GetScore() const { return CollectibleScore; }
+	//Called when colliding with a collectible on the server. Increases player score.
+	void GrantCollectible(const int32 CollectibleValue);
+
+	void SubscribeToScoreChanged(const FScoreCallback& Callback);
+	void UnsubscribeFromScoreChanged(const FScoreCallback& Callback);
+
+private:
+
+	UPROPERTY(ReplicatedUsing = OnRep_CollectibleScore)
+	int32 CollectibleScore = 0;
+	UFUNCTION()
+	void OnRep_CollectibleScore() { OnScoreChanged.Broadcast(CollectibleScore); }
+	FScoreNotification OnScoreChanged;
 
 #pragma endregion 
 };

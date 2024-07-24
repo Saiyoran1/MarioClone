@@ -15,7 +15,7 @@ const FName ANPCCharacter::BumperProfile = FName(TEXT("Bumper"));
 ANPCCharacter::ANPCCharacter()
 {
 	PrimaryActorTick.bCanEverTick = true;
-	SetReplicates(true);
+	bReplicates = true;
 
 	GetSprite()->SetUsingAbsoluteRotation(true);
 	GetSprite()->SetWorldRotation(FRotator(0.0f));
@@ -236,17 +236,17 @@ void ANPCCharacter::OnLifeStatusChanged(const bool bNewLifeStatus)
 	}
 }
 
-void ANPCCharacter::OnHitboxCollision(UHitbox* CollidingHitbox, const FVector& BounceImpulse, const float DamageValue)
+void ANPCCharacter::OnHitboxCollision(UHitbox* CollidingHitbox, const FVector& BounceToThis, const float DamageToThis, const FVector& BounceToOther, const float DamageToOther)
 {
 	if (HasAuthority())
 	{
-		if (!BounceImpulse.IsNearlyZero())
+		if (!BounceToThis.IsNearlyZero())
 		{
-			LaunchCharacter(BounceImpulse, false, true);
+			LaunchCharacter(BounceToThis, false, true);
 		}
-		if (DamageValue != 0.0f)
+		if (DamageToThis != 0.0f)
 		{
-			HealthComponent->ModifyHealth(DamageValue * -1.0f);
+			HealthComponent->ModifyHealth(DamageToThis * -1.0f);
 		}
 	}
 }

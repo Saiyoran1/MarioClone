@@ -1,10 +1,126 @@
 ﻿#include "HitboxManager.h"
 #include "Hitbox.h"
+#include "GameFramework/GameStateBase.h"
 
 void UHitboxManager::OnWorldBeginPlay(UWorld& InWorld)
 {
 	Super::OnWorldBeginPlay(InWorld);
 	HitboxMap.Empty();
+}
+
+void UHitboxManager::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+
+	//No need to tick on clients.
+	if (GetWorld()->IsNetMode(NM_Client))
+	{
+		return;
+	}
+
+	for (const TTuple<int32, UHitbox*> HitboxTuple : HitboxMap)
+	{
+		const UHitbox* Hitbox = HitboxTuple.Value;
+		if (IsValid(Hitbox))
+		{
+			if (FHitboxSnapshotArray* SnapshotArray = HitboxSnapshots.Find(HitboxTuple.Key))
+			{
+				SnapshotArray->Snapshots.Add(FHitboxSnapshot(GetWorld()->GetGameState()->GetServerWorldTimeSeconds(), Hitbox->GetComponentLocation()));
+				//Remove the oldest snapshots if we have more than our buffer.
+				while (SnapshotArray->Snapshots.Num() > MaxSnapshots)
+				{
+					SnapshotArray->Snapshots.RemoveAt(0);
+				}
+			}
+		}
+	}
+}
+
+int32 UHitboxManager::RegisterNewHitbox(UHitbox* Hitbox)
+{
+	if (!IsValid(Hitbox))
+	{
+		return -1;
+	}
+	const int32 NewID = HitboxIDCounter++;
+	HitboxMap.Add(NewID, Hitbox);
+	//Create a snapshot array for this hitbox so the server can validate client collisions.
+	FHitboxSnapshotArray& SnapshotArray = HitboxSnapshots.Add(NewID);
+	//Add an initial snapshot.
+	SnapshotArray.Snapshots.Add(FHitboxSnapshot(GetWorld()->GetGameState()->GetServerWorldTimeSeconds(), Hitbox->GetComponentLocation()));
+	return NewID;
+}
+
+void UHitboxManager::RegisterNewHitbox(UHitbox* Hitbox, const int32 ID)
+{
+	if (ID == -1 || !IsValid(Hitbox))
+	{
+		return;
+	}
+	HitboxMap.Add(ID, Hitbox);
+	//This overload is called on clients, so we don't need to do anything to the snapshot map.
+}
+
+void UHitboxManager::ConfirmCollisionOfHitboxes(const int32 InstigatorID, const int32 TargetID, const bool bDamage, const bool bBounce)
+{
+	if (!bDamage && !bBounce)
+	{
+		return;
+	}
+	UHitbox* InstigatorHitbox = HitboxMap.FindRef(InstigatorID);
+	if (!IsValid(InstigatorHitbox))
+	{
+		return;
+	}
+	UHitbox* TargetHitbox = HitboxMap.FindRef(TargetID);
+	if (!IsValid(TargetHitbox))
+	{
+		return;
+	}
+	const float Damage = bDamage ? InstigatorHitbox->GetCollisionDamageDone() : 0.0f;
+	const FVector Impulse = bBounce ? InstigatorHitbox->GetBounceImpulse() : FVector::ZeroVector;
+	TargetHitbox->NotifyOfCollisionResult(InstigatorHitbox, Impulse, Damage, FVector::ZeroVector, 0.0f);
+}
+
+FVector UHitboxManager::GetHitboxPositionAtTime(const int32 HitboxID, const float Timestamp) const
+{
+	const UHitbox* Hitbox = HitboxMap.FindRef(HitboxID);
+	if (!IsValid(Hitbox))
+	{
+		return FVector::ZeroVector;
+	}
+	const FHitboxSnapshotArray* SnapshotArray = HitboxSnapshots.Find(HitboxID);
+	//If this hitbox doesn't have a snapshot array or doesn't have snapshots, just return the hitbox's current location.
+	if (!SnapshotArray || SnapshotArray->Snapshots.Num() == 0)
+	{
+		return Hitbox->GetComponentLocation();
+	}
+	//Find a snapshot before the timestamp and a snapshot after the timestamp, and then lerp between them to guess at the position at the timestamp.
+	float TimeAfter = GetWorld()->GetGameState()->GetServerWorldTimeSeconds();
+	FVector PositionAfter = Hitbox->GetComponentLocation();
+	float TimeBefore = 0.0f;
+	FVector PositionBefore = FVector::ZeroVector;
+	bool bFoundPositionBefore = false;
+	for (int i = SnapshotArray->Snapshots.Num() - 1; i >= 0; i--)
+	{
+		if (SnapshotArray->Snapshots[i].Timestamp >= Timestamp)
+		{
+			TimeAfter = SnapshotArray->Snapshots[i].Timestamp;
+			PositionAfter = SnapshotArray->Snapshots[i].Location;
+		}
+		else
+		{
+			TimeBefore = SnapshotArray->Snapshots[i].Timestamp;
+			PositionBefore = SnapshotArray->Snapshots[i].Location;
+			bFoundPositionBefore = true;
+			break;
+		}
+	}
+	if (!bFoundPositionBefore)
+	{
+		return PositionAfter;
+	}
+	return FMath::Lerp(PositionBefore, PositionAfter, FMath::Clamp((Timestamp - TimeBefore) / (TimeAfter - TimeBefore), 0.0f, 1.0f));
 }
 
 FVector UHitboxManager::GetBounceImpulseForHitbox(const int32 HitboxID) const
@@ -36,33 +152,15 @@ bool UHitboxManager::SanityCheckBounce(const int32 HitboxIDA, const int32 Hitbox
 	{
 		return false;
 	}
-	//We will give a lot of leeway so that latency doesn't prevent us from bouncing.
-	//This is a trade-off between cheat-proofing accuracy and latency tolerance. A rewinding system would be better but out of scope for now.
-	const float ToleranceMultiplier = 3.0f;
-	//We also add a bit more leeway in the form of checking velocity of both actors. If they were moving in opposite directions, its possible that the distance they've moved while the RPC was sent is large.
-	//This is generous in that it always assumes the hitboxes were moving away from each other at whatever speed they're travelling right now.
-	const float PossibleMoveDistance = (HitboxA->GetOwner()->GetVelocity() * PingTime).Size() + (HitboxB->GetOwner()->GetVelocity() * PingTime).Size();
-	//There is additionally some tolerance built in here because we just get the bounds radius, which is the widest possible distance these two boxes could be from each other without regard for direction.
-	return FVector::DistSquared(HitboxA->GetComponentLocation(), HitboxB->GetComponentLocation())
-		< FMath::Square((HitboxA->Bounds.SphereRadius + HitboxB->Bounds.SphereRadius + PossibleMoveDistance) * ToleranceMultiplier);
-}
-
-int32 UHitboxManager::RegisterNewHitbox(const UHitbox* Hitbox)
-{
-	if (!IsValid(Hitbox))
+	//If we have no game state reference, things have gone wrong.
+	if (!IsValid(GetWorld()->GetGameState()))
 	{
-		return -1;
+		return false;
 	}
-	const int32 NewID = HitboxIDCounter++;
-	HitboxMap.Add(NewID, Hitbox);
-	return NewID;
-}
-
-void UHitboxManager::RegisterNewHitbox(const UHitbox* Hitbox, const int32 ID)
-{
-	if (ID == -1 || !IsValid(Hitbox))
-	{
-		return;
-	}
-	HitboxMap.Add(ID, Hitbox);
+	const float CurrentTime = GetWorld()->GetGameState()->GetServerWorldTimeSeconds();
+	const FVector PositionA = HitboxA->GetComponentLocation();
+	const FVector PositionB = GetHitboxPositionAtTime(HitboxIDB, CurrentTime - PingTime);
+	//We multiply the distance the hitboxes can be apart by a multiplier because ping isn't 100% accurate and we are also estimating based on lerping for position.
+	return FVector::DistSquared(PositionA, PositionB)
+		< FMath::Square((HitboxA->GetScaledSphereRadius() + HitboxB->GetScaledSphereRadius()) * HitboxToleranceMultiplier);
 }

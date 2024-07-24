@@ -1,10 +1,11 @@
 ﻿#pragma once
 #include "CoreMinimal.h"
+#include "MarioPlayerCharacter.h"
 #include "Blueprint/UserWidget.h"
 #include "PlayerHUD.generated.h"
 
+class UTextBlock;
 class ULivesContainer;
-class AMarioPlayerCharacter;
 class UCanvasPanel;
 
 UCLASS()
@@ -22,4 +23,10 @@ private:
 	UCanvasPanel* MainPanel;
 	UPROPERTY(VisibleAnywhere, meta = (BindWidget))
 	ULivesContainer* LivesBox;
+	UPROPERTY(VisibleAnywhere, meta = (BindWidget))
+	UTextBlock* ScoreText;
+
+	FScoreCallback ScoreCallback;
+	UFUNCTION()
+	void OnPlayerScoreChanged(const int32 NewScore);
 };

@@ -27,6 +27,10 @@ class MARIOCLONE_API UMarioMovementComponent : public UCharacterMovementComponen
 		uint8 bSavedWantsBounce : 1;
 		int32 SavedThisBounceBoxID = -1;
 		int32 SavedOtherBounceBoxID = -1;
+		bool bSavedBouncedThis = false;
+		bool bSavedBouncedOther = false;
+		bool bSavedDamagedThis = false;
+		bool bSavedDamagedOther = false;
 	};
 
 	virtual void UpdateFromCompressedFlags(uint8 Flags) override;
@@ -57,6 +61,10 @@ class MARIOCLONE_API UMarioMovementComponent : public UCharacterMovementComponen
 
 		int32 ThisBounceBoxID = -1;
 		int32 OtherBounceBoxID = -1;
+		bool bBouncedThis = false;
+		bool bBouncedOther = false;
+		bool bDamagedThis = false;
+		bool bDamagedOther = false;
 
 		virtual void ClientFillNetworkMoveData(const FSavedMove_Character& ClientMove, ENetworkMoveType MoveType) override;
 		virtual bool Serialize(UCharacterMovementComponent& CharacterMovement, FArchive& Ar, UPackageMap* PackageMap, ENetworkMoveType MoveType) override;
@@ -92,7 +100,8 @@ public:
 	virtual void UpdateCharacterStateBeforeMovement(float DeltaSeconds) override;
 	virtual float GetGravityZ() const override;
 	
-	void TriggerBounce(const int32 ThisHitboxID, const int32 OtherHitboxID);
+	void OnHitboxCollision(const int32 ThisID, const int32 OtherID,
+		const bool bThisBounced, const bool bOtherBounced, const bool bThisDamaged, const bool bOtherDamaged);
 
 private:
 
@@ -103,6 +112,10 @@ private:
 	UPROPERTY()
 	UHitboxManager* HitboxManager = nullptr;
 	uint8 bWantsBounce : 1;
-	int32 ThisBounceBoxID = -1;
-	int32 OtherBounceBoxID = -1;
+	int32 ThisHitboxID = -1;
+	int32 OtherHitboxID = -1;
+	bool bBouncedThis = false;
+	bool bBouncedOther = false;
+	bool bDamagedThis = false;
+	bool bDamagedOther = false;
 };

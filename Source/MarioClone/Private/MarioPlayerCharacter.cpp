@@ -23,7 +23,6 @@ AMarioPlayerCharacter::AMarioPlayerCharacter(const FObjectInitializer& ObjectIni
 
 	GetSprite()->SetUsingAbsoluteRotation(true);
 	GetSprite()->SetWorldRotation(FRotator(0.0f));
-	CachedSpriteMaterial = GetSprite()->GetMaterial(0);
 
 	PlayerHitbox = CreateDefaultSubobject<UHitbox>(FName(TEXT("Hitbox")));
 	PlayerHitbox->SetupAttachment(RootComponent);
@@ -40,6 +39,7 @@ void AMarioPlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 
 	DOREPLIFETIME_CONDITION(AMarioPlayerCharacter, CurrentLives, COND_OwnerOnly);
 	DOREPLIFETIME(AMarioPlayerCharacter, bImmune);
+	DOREPLIFETIME_CONDITION(AMarioPlayerCharacter, CollectibleScore, COND_OwnerOnly);
 }
 
 void AMarioPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -104,6 +104,7 @@ void AMarioPlayerCharacter::BeginPlay()
 	RespawnDelay = FMath::Max(0.0f, RespawnDelay);
 	CachedSpawnLocation = GetActorLocation();
 	CachedSpawnRotation = GetActorRotation();
+	CachedSpriteMaterial = IsValid(GetSprite()) ? GetSprite()->GetMaterial(0) : nullptr;
 	
 	//Constrain movement to the X and Z axes, since this is a 2D game.
 	GetMovementComponent()->SetPlaneConstraintEnabled(true);
@@ -117,12 +118,6 @@ void AMarioPlayerCharacter::BeginPlay()
 
 	HitboxCallback.BindDynamic(this, &AMarioPlayerCharacter::OnHitboxCollision);
 	PlayerHitbox->SubscribeToHitboxCollision(HitboxCallback);
-
-	if (IsLocallyControlled())
-	{
-		//Cache off camera's initial world space offset, so that we can use it as a reference point when leading the player.
-		DesiredBaseCameraOffset = Camera->GetComponentLocation() - GetActorLocation();
-	}
 
 	//Subscribe to the GameState's GameStart and GameEnd delegates.
 	if (HasAuthority() || IsLocallyControlled())
@@ -145,6 +140,7 @@ void AMarioPlayerCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
+	//If the player is disabled (dead or the game has ended), early exit.
 	if (!bIsEnabled)
 	{
 		return;
@@ -155,6 +151,7 @@ void AMarioPlayerCharacter::Tick(float DeltaSeconds)
 		return;
 	}
 
+	//Update our sprite flash material visual while immune.
 	if (bImmune && IsValid(DynamicSpriteFlashMaterial))
 	{
 		TimeSinceImmunityStart += DeltaSeconds;
@@ -163,7 +160,8 @@ void AMarioPlayerCharacter::Tick(float DeltaSeconds)
 		const float Opacity = 0.5f * (1 + FMath::Sin(2 * PI * Frequency * TimeSinceImmunityStart));
 		DynamicSpriteFlashMaterial->SetScalarParameterValue(FName("Opacity"), Opacity);
 	}
-	
+
+	//Determine which sprite flipbook to use based on whether we are jumping, running, or standing still.
 	UPaperFlipbook* Flipbook = nullptr;
 	FVector Velocity = FVector::ZeroVector;
 	if (IsValid(MarioMoveComponent))
@@ -179,7 +177,7 @@ void AMarioPlayerCharacter::Tick(float DeltaSeconds)
 		}
 	}
 
-	//Fallback in case all flipbook was null or our movement component was null.
+	//Fallback in case all flipbooks were null or our movement component was null.
 	if (!IsValid(Flipbook))
 	{
 		if (IsValid(IdleFlipbook))
@@ -303,14 +301,20 @@ void AMarioPlayerCharacter::OnGameStarted()
 		CurrentLives = MaxLives;
 		OnRep_CurrentLives();
 		Respawn();
+		
+		CollectibleScore = 0;
+		OnRep_CollectibleScore();
 	}
 	
 	EnablePlayer();
 	
-	if (IsLocallyControlled() && IsValid(GameOverScreen))
+	if (IsLocallyControlled())
 	{
-		GameOverScreen->RemoveFromParent();
-		GameOverScreen = nullptr;
+		if (IsValid(GameOverScreen))
+		{
+			GameOverScreen->RemoveFromParent();
+			GameOverScreen = nullptr;
+		}
 		if (IsValid(PlayerController))
 		{
 			PlayerController->SetInputMode(FInputModeGameOnly());
@@ -322,6 +326,7 @@ void AMarioPlayerCharacter::OnGameStarted()
 void AMarioPlayerCharacter::OnGameEnded(const bool bGameWon)
 {
 	DisablePlayer();
+	
 	if (IsLocallyControlled() && IsValid(PlayerController) && !IsValid(GameOverScreen) && IsValid(GameOverScreenClass))
 	{
 		GameOverScreen = CreateWidget<UGameOverScreen>(PlayerController, GameOverScreenClass);
@@ -396,32 +401,24 @@ void AMarioPlayerCharacter::OnRep_bImmune()
 	{
 		if (bImmune)
 		{
-			if (IsValid(PlayerHitbox))
-			{
-				PlayerHitbox->DisableHitbox();
-			}
 			if (IsValid(GetSprite()) && IsValid(SpriteFlashMaterial))
 			{
 				DynamicSpriteFlashMaterial = UMaterialInstanceDynamic::Create(SpriteFlashMaterial, this);
 				if (IsValid(DynamicSpriteFlashMaterial))
 				{
-					TimeSinceImmunityStart = 0.0f;
 					GetSprite()->SetMaterial(0, DynamicSpriteFlashMaterial);
 				}
 			}
+			TimeSinceImmunityStart = 0.0f;
 		}
 		else
 		{
-			if (IsValid(PlayerHitbox))
-			{
-				PlayerHitbox->EnableHitbox();
-			}
-			if (IsValid(GetSprite()))
+			if (IsValid(GetSprite()) && IsValid(CachedSpriteMaterial))
 			{
 				GetSprite()->SetMaterial(0, CachedSpriteMaterial);
 				DynamicSpriteFlashMaterial = nullptr;
-				TimeSinceImmunityStart = 0.0f;
 			}
+			TimeSinceImmunityStart = 0.0f;
 		}
 	}
 }
@@ -508,15 +505,44 @@ void AMarioPlayerCharacter::UnsubscribeFromLivesChanged(const FLivesCallback& Ca
 #pragma endregion
 #pragma region Collision
 
-void AMarioPlayerCharacter::OnHitboxCollision(UHitbox* CollidingHitbox, const FVector& BounceImpulse, const float DamageValue)
+void AMarioPlayerCharacter::OnHitboxCollision(UHitbox* CollidingHitbox, const FVector& BounceToThis, const float DamageToThis, const FVector& BounceToOther, const float DamageToOther)
 {
-	if (IsLocallyControlled() && IsValid(MarioMoveComponent) && !BounceImpulse.IsNearlyZero())
+	if (IsLocallyControlled() && IsValid(MarioMoveComponent))
 	{
-		MarioMoveComponent->TriggerBounce(PlayerHitbox->GetHitboxID(), CollidingHitbox->GetHitboxID());
+		MarioMoveComponent->OnHitboxCollision(PlayerHitbox->GetHitboxID(), CollidingHitbox->GetHitboxID(),
+			BounceToThis != FVector::ZeroVector, BounceToOther != FVector::ZeroVector, DamageToThis != 0.0f, DamageToOther != 0.0f);
 	}
-	if (HasAuthority() && IsValid(HealthComponent) && DamageValue != 0.0f)
+	if (HasAuthority() && !bImmune && DamageToThis != 0.0f && IsValid(HealthComponent))
 	{
-		HealthComponent->ModifyHealth(DamageValue * -1.0f);
+		HealthComponent->ModifyHealth(-1.0f * DamageToThis);
+	}
+}
+
+#pragma endregion
+#pragma region Collectibles
+
+void AMarioPlayerCharacter::GrantCollectible(const int32 CollectibleValue)
+{
+	if (HasAuthority())
+	{
+		CollectibleScore += CollectibleValue;
+		OnRep_CollectibleScore();
+	}
+}
+
+void AMarioPlayerCharacter::SubscribeToScoreChanged(const FScoreCallback& Callback)
+{
+	if (Callback.IsBound())
+	{
+		OnScoreChanged.AddUnique(Callback);
+	}
+}
+
+void AMarioPlayerCharacter::UnsubscribeFromScoreChanged(const FScoreCallback& Callback)
+{
+	if (Callback.IsBound())
+	{
+		OnScoreChanged.Remove(Callback);
 	}
 }
 

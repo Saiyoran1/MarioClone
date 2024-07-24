@@ -85,7 +85,7 @@ private:
 	UHitbox* Hitbox = nullptr;
 	FHitboxCallback HitboxCallback;
 	UFUNCTION()
-	void OnHitboxCollision(UHitbox* CollidingHitbox, const FVector& BounceImpulse, const float DamageValue);
+	void OnHitboxCollision(UHitbox* CollidingHitbox, const FVector& BounceToThis, const float DamageToThis, const FVector& BounceToOther, const float DamageToOther);
 
 	UPROPERTY(EditAnywhere, Category = "Health")
 	bool bCanRespawn = false;

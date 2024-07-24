@@ -9,7 +9,7 @@ void URespawnWidget::Init(ANPCCharacter* RespawningCharacter)
 		return;
 	}
 	CharacterRef = RespawningCharacter;
-	RespawnStartTime = GetWorld()->GetGameState()->GetServerWorldTimeSeconds();
+	RespawnStartTime = GetWorld()->GetGameState() ? GetWorld()->GetGameState()->GetServerWorldTimeSeconds() : GetWorld()->GetTimeSeconds();
 	RespawnEndTime = CharacterRef->GetRespawnTime();
 	if (IsValid(RespawnProgress))
 	{

@@ -13,8 +13,12 @@ void UMarioMovementComponent::FSavedMove_Mario::SetMoveFor(ACharacter* C, float 
 	if (IsValid(MovementComponent))
 	{
 		bSavedWantsBounce = MovementComponent->bWantsBounce;
-		SavedThisBounceBoxID = MovementComponent->ThisBounceBoxID;
-		SavedOtherBounceBoxID = MovementComponent->OtherBounceBoxID;
+		SavedThisBounceBoxID = MovementComponent->ThisHitboxID;
+		SavedOtherBounceBoxID = MovementComponent->OtherHitboxID;
+		bSavedBouncedThis = MovementComponent->bBouncedThis;
+		bSavedBouncedOther = MovementComponent->bBouncedOther;
+		bSavedDamagedThis = MovementComponent->bDamagedThis;
+		bSavedDamagedOther = MovementComponent->bDamagedOther;
 	}
 }
 
@@ -26,8 +30,12 @@ void UMarioMovementComponent::FSavedMove_Mario::PrepMoveFor(ACharacter* C)
 	if (IsValid(MovementComponent))
 	{
 		MovementComponent->bWantsBounce = bSavedWantsBounce;
-		MovementComponent->ThisBounceBoxID = SavedThisBounceBoxID;
-		MovementComponent->OtherBounceBoxID = SavedOtherBounceBoxID;
+		MovementComponent->ThisHitboxID = SavedThisBounceBoxID;
+		MovementComponent->OtherHitboxID = SavedOtherBounceBoxID;
+		MovementComponent->bBouncedThis = bSavedBouncedThis;
+		MovementComponent->bBouncedOther = bSavedBouncedOther;
+		MovementComponent->bDamagedThis = bSavedDamagedThis;
+		MovementComponent->bDamagedOther = bSavedDamagedOther;
 	}
 }
 
@@ -37,6 +45,10 @@ void UMarioMovementComponent::FSavedMove_Mario::Clear()
 	bSavedWantsBounce = false;
 	SavedThisBounceBoxID = -1;
 	SavedOtherBounceBoxID = -1;
+	bSavedBouncedThis = false;
+	bSavedBouncedOther = false;
+	bSavedDamagedThis = false;
+	bSavedDamagedOther = false;
 }
 
 bool UMarioMovementComponent::FSavedMove_Mario::CanCombineWith(const FSavedMovePtr& NewMove, ACharacter* InCharacter, float MaxDelta) const
@@ -48,7 +60,11 @@ bool UMarioMovementComponent::FSavedMove_Mario::CanCombineWith(const FSavedMoveP
 	const FSavedMove_Mario* NewMoveCast = static_cast<FSavedMove_Mario*>(NewMove.Get());
 	return bSavedWantsBounce == NewMoveCast->bSavedWantsBounce
 		&& SavedThisBounceBoxID == NewMoveCast->SavedThisBounceBoxID
-		&& SavedOtherBounceBoxID == NewMoveCast->SavedOtherBounceBoxID;
+		&& SavedOtherBounceBoxID == NewMoveCast->SavedOtherBounceBoxID
+		&& bSavedBouncedThis == NewMoveCast->bSavedBouncedThis
+		&& bSavedBouncedOther == NewMoveCast->bSavedBouncedOther
+		&& bSavedDamagedThis == NewMoveCast->bSavedDamagedThis
+		&& bSavedDamagedOther == NewMoveCast->bSavedDamagedOther;
 }
 
 uint8 UMarioMovementComponent::FSavedMove_Mario::GetCompressedFlags() const
@@ -101,6 +117,10 @@ void UMarioMovementComponent::FMarioNetworkMoveData::ClientFillNetworkMoveData(c
 	const FSavedMove_Mario& CastMove = static_cast<const FSavedMove_Mario&>(ClientMove);
 	ThisBounceBoxID = CastMove.SavedThisBounceBoxID;
 	OtherBounceBoxID = CastMove.SavedOtherBounceBoxID;
+	bBouncedThis = CastMove.bSavedBouncedThis;
+	bBouncedOther = CastMove.bSavedBouncedOther;
+	bDamagedThis = CastMove.bSavedDamagedThis;
+	bDamagedOther = CastMove.bSavedDamagedOther;
 }
 
 bool UMarioMovementComponent::FMarioNetworkMoveData::Serialize(UCharacterMovementComponent& CharacterMovement, FArchive& Ar, UPackageMap* PackageMap, ENetworkMoveType MoveType)
@@ -108,6 +128,10 @@ bool UMarioMovementComponent::FMarioNetworkMoveData::Serialize(UCharacterMovemen
 	const bool bResult = Super::Serialize(CharacterMovement, Ar, PackageMap, MoveType);
 	SerializeOptionalValue(Ar.IsSaving(), Ar, ThisBounceBoxID, -1);
 	SerializeOptionalValue(Ar.IsSaving(), Ar, OtherBounceBoxID, -1);
+	Ar << bBouncedThis;
+	Ar << bBouncedOther;
+	Ar << bDamagedThis;
+	Ar << bDamagedOther;
 
 	return bResult;
 }
@@ -131,8 +155,12 @@ void UMarioMovementComponent::MoveAutonomous(float ClientTimeStamp, float DeltaT
 {
 	//This runs on the server, and we copy our network move data into the CMC here to use it during the move.
 	const FMarioNetworkMoveData* MoveData = static_cast<const FMarioNetworkMoveData*>(GetCurrentNetworkMoveData());
-	ThisBounceBoxID = MoveData->ThisBounceBoxID;
-	OtherBounceBoxID = MoveData->OtherBounceBoxID;
+	ThisHitboxID = MoveData->ThisBounceBoxID;
+	OtherHitboxID = MoveData->OtherBounceBoxID;
+	bBouncedThis = MoveData->bBouncedThis;
+	bBouncedOther = MoveData->bBouncedOther;
+	bDamagedThis = MoveData->bDamagedThis;
+	bDamagedOther = MoveData->bDamagedOther;
 	
 	Super::MoveAutonomous(ClientTimeStamp, DeltaTime, CompressedFlags, NewAccel);
 }
@@ -152,16 +180,29 @@ void UMarioMovementComponent::UpdateCharacterStateBeforeMovement(float DeltaSeco
 		{
 			PingCompensation = PlayerState->GetPingInMilliseconds() / 1000.0f;
 		}
-		if (IsValid(HitboxManager) && (GetOwnerRole() != ROLE_Authority || HitboxManager->SanityCheckBounce(ThisBounceBoxID, OtherBounceBoxID, PingCompensation)))
+		if (IsValid(HitboxManager) && (GetOwnerRole() != ROLE_Authority || HitboxManager->SanityCheckBounce(ThisHitboxID, OtherHitboxID, PingCompensation)))
 		{
-			const FVector BounceImpulse = HitboxManager->GetBounceImpulseForHitbox(OtherBounceBoxID);
-			if (BounceImpulse != FVector::ZeroVector)
+			if (bBouncedThis)
 			{
-				Launch(BounceImpulse);
+				const FVector BounceImpulse = HitboxManager->GetBounceImpulseForHitbox(OtherHitboxID);
+				if (BounceImpulse != FVector::ZeroVector)
+				{
+					Launch(BounceImpulse);
+				}
+			}
+			//If we're authority, then we passed the sanity check above and can apply the authoritative effects of the collision.
+			if (GetOwnerRole() == ROLE_Authority && !PawnOwner->IsLocallyControlled())
+			{
+				HitboxManager->ConfirmCollisionOfHitboxes(ThisHitboxID, OtherHitboxID, bDamagedOther, bBouncedOther);
+				HitboxManager->ConfirmCollisionOfHitboxes(OtherHitboxID, ThisHitboxID, bDamagedThis, false);
 			}
 		}
-		ThisBounceBoxID = -1;
-		OtherBounceBoxID = -1;
+		ThisHitboxID = -1;
+		OtherHitboxID = -1;
+		bBouncedThis = false;
+		bBouncedOther = false;
+		bDamagedThis = false;
+		bDamagedOther = false;
 	}
 }
 
@@ -174,15 +215,20 @@ float UMarioMovementComponent::GetGravityZ() const
 	return Super::GetGravityZ() * DownwardGravityMultiplier;
 }
 
-void UMarioMovementComponent::TriggerBounce(const int32 ThisHitboxID, const int32 OtherHitboxID)
+void UMarioMovementComponent::OnHitboxCollision(const int32 ThisID, const int32 OtherID,
+	const bool bThisBounced, const bool bOtherBounced, const bool bThisDamaged, const bool bOtherDamaged)
 {
 	if (!GetPawnOwner()->IsLocallyControlled())
 	{
 		return;
 	}
 	bWantsBounce = true;
-	ThisBounceBoxID = ThisHitboxID;
-	OtherBounceBoxID = OtherHitboxID;
+	ThisHitboxID = ThisID;
+	OtherHitboxID = OtherID;
+	bBouncedThis = bThisBounced;
+	bBouncedOther = bOtherBounced;
+	bDamagedThis = bThisDamaged;
+	bDamagedOther = bOtherDamaged;
 }
 
 #pragma endregion 
